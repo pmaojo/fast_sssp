@@ -1,0 +1,12 @@
+/Users/pelayo/projects/fast_sssp/target/release/deps/libcolored-3b3a51303540f8dc.rmeta: /Users/pelayo/.cargo/registry/src/index.crates.io-6f17d22bba15001f/colored-2.2.0/src/lib.rs /Users/pelayo/.cargo/registry/src/index.crates.io-6f17d22bba15001f/colored-2.2.0/src/color.rs /Users/pelayo/.cargo/registry/src/index.crates.io-6f17d22bba15001f/colored-2.2.0/src/control.rs /Users/pelayo/.cargo/registry/src/index.crates.io-6f17d22bba15001f/colored-2.2.0/src/error.rs /Users/pelayo/.cargo/registry/src/index.crates.io-6f17d22bba15001f/colored-2.2.0/src/style.rs /Users/pelayo/.cargo/registry/src/index.crates.io-6f17d22bba15001f/colored-2.2.0/src/customcolors.rs
+
+/Users/pelayo/projects/fast_sssp/target/release/deps/libcolored-3b3a51303540f8dc.rlib: /Users/pelayo/.cargo/registry/src/index.crates.io-6f17d22bba15001f/colored-2.2.0/src/lib.rs /Users/pelayo/.cargo/registry/src/index.crates.io-6f17d22bba15001f/colored-2.2.0/src/color.rs /Users/pelayo/.cargo/registry/src/index.crates.io-6f17d22bba15001f/colored-2.2.0/src/control.rs /Users/pelayo/.cargo/registry/src/index.crates.io-6f17d22bba15001f/colored-2.2.0/src/error.rs /Users/pelayo/.cargo/registry/src/index.crates.io-6f17d22bba15001f/colored-2.2.0/src/style.rs /Users/pelayo/.cargo/registry/src/index.crates.io-6f17d22bba15001f/colored-2.2.0/src/customcolors.rs
+
+/Users/pelayo/projects/fast_sssp/target/release/deps/colored-3b3a51303540f8dc.d: /Users/pelayo/.cargo/registry/src/index.crates.io-6f17d22bba15001f/colored-2.2.0/src/lib.rs /Users/pelayo/.cargo/registry/src/index.crates.io-6f17d22bba15001f/colored-2.2.0/src/color.rs /Users/pelayo/.cargo/registry/src/index.crates.io-6f17d22bba15001f/colored-2.2.0/src/control.rs /Users/pelayo/.cargo/registry/src/index.crates.io-6f17d22bba15001f/colored-2.2.0/src/error.rs /Users/pelayo/.cargo/registry/src/index.crates.io-6f17d22bba15001f/colored-2.2.0/src/style.rs /Users/pelayo/.cargo/registry/src/index.crates.io-6f17d22bba15001f/colored-2.2.0/src/customcolors.rs
+
+/Users/pelayo/.cargo/registry/src/index.crates.io-6f17d22bba15001f/colored-2.2.0/src/lib.rs:
+/Users/pelayo/.cargo/registry/src/index.crates.io-6f17d22bba15001f/colored-2.2.0/src/color.rs:
+/Users/pelayo/.cargo/registry/src/index.crates.io-6f17d22bba15001f/colored-2.2.0/src/control.rs:
+/Users/pelayo/.cargo/registry/src/index.crates.io-6f17d22bba15001f/colored-2.2.0/src/error.rs:
+/Users/pelayo/.cargo/registry/src/index.crates.io-6f17d22bba15001f/colored-2.2.0/src/style.rs:
+/Users/pelayo/.cargo/registry/src/index.crates.io-6f17d22bba15001f/colored-2.2.0/src/customcolors.rs:

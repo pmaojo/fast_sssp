@@ -1,0 +1,21 @@
+[package]
+name = "fast_sssp"
+version = "0.1.0"
+edition = "2021"
+authors = ["Pelayo Maojo <pelayo.maojo@gmail.com>"]
+description = "Implementation of O(m log^(2/3) n) single-source shortest path algorithm"
+license = "MIT"
+repository = "https://github.com/pmaojo/fast_sssp"
+
+[dependencies]
+num-traits = "0.2"    # For numeric traits
+thiserror = "1.0"     # For better error handling
+log = "0.4"           # For logging
+rayon = "1.7"         # For potential parallel operations
+ordered-float = "3.0" # For floating point numbers with Ord trait
+rand = "0.8"          # For generating random graphs
+
+[dev-dependencies]
+criterion = "0.4"     # For benchmarking (older version for compatibility)
+rand = "0.8"          # For generating random graphs
+colored = "2.0"       # For colored terminal output

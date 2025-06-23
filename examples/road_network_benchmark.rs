@@ -1,7 +1,7 @@
 use fast_sssp::algorithm::dijkstra::Dijkstra;
 use fast_sssp::algorithm::fast_sssp::FastSSSP;
 use fast_sssp::algorithm::traits::ShortestPathAlgorithm;
-use fast_sssp::graph::{DirectedGraph, MutableGraph};
+use fast_sssp::graph::{DirectedGraph, MutableGraph, Graph};
 use ordered_float::OrderedFloat;
 use std::env;
 use std::fs::File;

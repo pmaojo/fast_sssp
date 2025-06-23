@@ -71,6 +71,16 @@ Key parameters in the algorithm:
 - k = log^(1/3)(n)
 - t = log^(2/3)(n)
 - level = ceil(ln(n) / t)
+## Benchmarking with Road Networks
+
+Use the `road_network_benchmark` example to evaluate the algorithms on a real road network in DIMACS `.gr` format:
+
+```bash
+cargo run --release --example road_network_benchmark path/to/USA-road-d.CAL.gr
+```
+
+Add a source vertex ID as a second argument if needed. The example loads the graph, runs FastSSSP and Dijkstra, and prints their run times.
+
 
 ## License
 

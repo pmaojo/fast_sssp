@@ -70,6 +70,7 @@ The algorithm is based on the bounded multi-source shortest path (BMSSP) procedu
 Key parameters in the algorithm:
 - k = log^(1/3)(n)
 - t = log^(2/3)(n)
+- level = ceil(ln(n) / t)
 
 ## License
 

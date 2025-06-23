@@ -486,6 +486,13 @@ where
             let log_n = (n as f64).ln();
             let k = (log_n.powf(1.0/3.0)).ceil() as usize;
             let t = (log_n.powf(2.0/3.0)).ceil() as usize;
+
+            // Level determines the depth of the BMSSP recursion.  It is the
+            // ceiling of ln(n) divided by t as suggested in the paper.
+            let mut level = ((n as f64).ln() / (t as f64)).ceil() as usize;
+            if level < 1 {
+                level = 1;
+            }
             
             println!("Running BMSSP with parameters k={}, t={}", k, t);
             
@@ -500,12 +507,12 @@ where
             distances[working_source] = W::zero();
             predecessors[working_source] = Some(working_source);
             
-            // Execute BMSSP
+            // Execute BMSSP starting from the computed top level
             let _bmssp_result = bmssp.execute(
-                &working_graph, 
-                1, // Top level
-                W::max_value(), 
-                &[working_source], 
+                &working_graph,
+                level,
+                W::max_value(),
+                &[working_source],
                 &mut distances,
                 &mut predecessors
             )?;

@@ -1,10 +1,10 @@
 use std::fmt::Debug;
-use std::collections::{HashSet, BinaryHeap, HashMap};
+use std::collections::{HashSet, HashMap};
 use std::marker::PhantomData;
 use num_traits::{Float, Zero};
 
 use crate::graph::Graph;
-use crate::data_structures::BlockList;
+use crate::data_structures::{BlockList, BinaryHeapWrapper};
 use crate::{Error, Result};
 
 /// Implementation of the Bounded Multi-Source Shortest Path (BMSSP) algorithm
@@ -219,65 +219,48 @@ where
     {
         println!("BMSSP base_case called with {} sources and bound {:?}", sources.len(), bound);
         
-        // Initialize a min-heap for Dijkstra's algorithm
-        let mut heap = BinaryHeap::new();
-        let mut result_vertices = Vec::new();
+        // Priority queue for Dijkstra exploration
+        let mut heap = BinaryHeapWrapper::new();
         let mut visited = vec![false; graph.vertex_count()];
-        
-        // Add all sources to the heap
+
+        // Push sources into the queue
         for &source in sources {
-            heap.push(std::cmp::Reverse((distances[source], source)));
-            result_vertices.push(source); // Add source to result vertices
-            visited[source] = true;
+            heap.push(source, distances[source]);
         }
-        
-        // Run Dijkstra's algorithm with the given bound
-        while let Some(std::cmp::Reverse((dist_u, u))) = heap.pop() {
-            // Skip if we've already found a better path
-            if dist_u > distances[u] {
+
+        // Vertices discovered in order of increasing distance
+        let mut discovered = Vec::new();
+        let mut k_plus_one_dist = None;
+
+        while let Some((u, dist_u)) = heap.pop() {
+            if dist_u >= bound {
+                break;
+            }
+
+            if dist_u > distances[u] || visited[u] {
                 continue;
             }
-            
-            // Skip if we've reached the bound
-            if dist_u > bound {
-                continue;
+            visited[u] = true;
+
+            discovered.push(u);
+            if discovered.len() == self.k + 1 {
+                k_plus_one_dist = Some(dist_u);
+                break;
             }
-            
-            // Relax outgoing edges
+
             for (v, weight) in graph.outgoing_edges(u) {
                 let new_dist = dist_u + weight;
-                
-                // Only update if the new distance is better and within the bound
-                if new_dist <= bound && new_dist < distances[v] {
+                if new_dist < bound && new_dist < distances[v] {
                     distances[v] = new_dist;
                     predecessors[v] = Some(u);
-                    heap.push(std::cmp::Reverse((new_dist, v)));
-                    
-                    // Add to result vertices if not already visited
-                    if !visited[v] {
-                        result_vertices.push(v);
-                        visited[v] = true;
-                    }
+                    heap.push(v, new_dist);
                 }
             }
         }
-        
-        // Determine new boundary
-        let new_bound = if result_vertices.len() <= self.k {
-            bound
-        } else {
-            // Find maximum distance among vertices in result
-            let mut max_dist = W::zero();
-            for &v in &result_vertices {
-                if distances[v] > max_dist {
-                    max_dist = distances[v];
-                }
-            }
-            max_dist
-        };
-        
-        // Filter out vertices with distances >= new_bound
-        let result_vec = result_vertices.into_iter()
+
+        let new_bound = k_plus_one_dist.unwrap_or(bound);
+        let result_vec = discovered
+            .into_iter()
             .filter(|&v| distances[v] < new_bound)
             .collect::<Vec<_>>();
             

@@ -206,6 +206,8 @@ where
     }
     
     /// Base case of the BMSSP algorithm (level = 0)
+    /// This is an optimized implementation of the mini-Dijkstra algorithm
+    /// that limits the number of vertices processed based on the k parameter
     fn base_case(
         &self,
         graph: &G,
@@ -219,48 +221,214 @@ where
     {
         println!("BMSSP base_case called with {} sources and bound {:?}", sources.len(), bound);
         
-        // Priority queue for Dijkstra exploration
-        let mut heap = BinaryHeapWrapper::new();
-        let mut visited = vec![false; graph.vertex_count()];
-
-        // Push sources into the queue
-        for &source in sources {
-            heap.push(source, distances[source]);
+        // Early termination for empty sources
+        if sources.is_empty() {
+            return Ok(BMSSPResult {
+                new_bound: bound,
+                vertices: Vec::new(),
+            });
         }
-
-        // Vertices discovered in order of increasing distance
-        let mut discovered = Vec::new();
-        let mut k_plus_one_dist = None;
-
-        while let Some((u, dist_u)) = heap.pop() {
-            if dist_u >= bound {
-                break;
+        
+        // For single source with small k, use optimized mini-Dijkstra
+        if sources.len() == 1 {
+            return self.mini_dijkstra(graph, sources[0], bound, distances, predecessors);
+        }
+        
+        // Pre-allocate with capacity to avoid reallocations
+        let mut heap = BinaryHeap::with_capacity(self.k * 4);
+        let mut result_vertices = Vec::with_capacity(self.k * 2);
+        
+        // Use a bitmap for visited tracking (more efficient than a full boolean vector)
+        let vertex_count = graph.vertex_count();
+        let mut visited = vec![false; vertex_count];
+        
+        // Counter for processed vertices to enforce the k-limit
+        let mut processed_count = 0;
+        
+        // Add all sources to the heap
+        for &source in sources {
+            if !visited[source] {
+                heap.push(std::cmp::Reverse((distances[source], source)));
+                result_vertices.push(source);
+                visited[source] = true;
             }
-
-            if dist_u > distances[u] || visited[u] {
+        }
+        
+        // Run bounded Dijkstra's algorithm
+        while let Some(std::cmp::Reverse((dist_u, u))) = heap.pop() {
+            // Skip if we've already found a better path or reached the bound
+            if dist_u > distances[u] || dist_u > bound {
                 continue;
             }
-            visited[u] = true;
-
-            discovered.push(u);
-            if discovered.len() == self.k + 1 {
-                k_plus_one_dist = Some(dist_u);
+            
+            // Increment processed count and check limit
+            processed_count += 1;
+            if processed_count > self.k * 2 {
+                // We've processed enough vertices, stop early
                 break;
             }
-
+            
+            // Process outgoing edges using block processing for better cache efficiency
+            let mut edge_buffer = Vec::with_capacity(8); // Small buffer for edge batching
+            
             for (v, weight) in graph.outgoing_edges(u) {
-                let new_dist = dist_u + weight;
-                if new_dist < bound && new_dist < distances[v] {
-                    distances[v] = new_dist;
-                    predecessors[v] = Some(u);
-                    heap.push(v, new_dist);
+                edge_buffer.push((v, weight));
+                
+                // Process edges in small batches for better cache locality
+                if edge_buffer.len() >= 8 {
+                    self.process_edge_batch(
+                        &edge_buffer, 
+                        u, 
+                        dist_u, 
+                        bound, 
+                        distances, 
+                        predecessors, 
+                        &mut heap, 
+                        &mut visited, 
+                        &mut result_vertices
+                    );
+                    edge_buffer.clear();
+                }
+            }
+            
+            // Process remaining edges
+            if !edge_buffer.is_empty() {
+                self.process_edge_batch(
+                    &edge_buffer, 
+                    u, 
+                    dist_u, 
+                    bound, 
+                    distances, 
+                    predecessors, 
+                    &mut heap, 
+                    &mut visited, 
+                    &mut result_vertices
+                );
+            }
+        }
+        
+        // Determine new boundary using a more efficient approach
+        let new_bound = self.calculate_new_bound(result_vertices.len(), bound, &result_vertices, distances);
+        
+        // Filter out vertices with distances >= new_bound
+        // Use drain_filter when it becomes stable for better performance
+        let result_vec = result_vertices.into_iter()
+            .filter(|&v| distances[v] < new_bound)
+            .collect::<Vec<_>>();
+            
+        Ok(BMSSPResult {
+            new_bound,
+            vertices: result_vec,
+        })
+    }
+    
+    /// Helper function to process a batch of edges for better cache efficiency
+    #[inline]
+    fn process_edge_batch(
+        &self,
+        edge_batch: &[(usize, W)],
+        u: usize,
+        dist_u: W,
+        bound: W,
+        distances: &mut Vec<W>,
+        predecessors: &mut Vec<Option<usize>>,
+        heap: &mut BinaryHeap<std::cmp::Reverse<(W, usize)>>,
+        visited: &mut Vec<bool>,
+        result_vertices: &mut Vec<usize>,
+    ) {
+        for &(v, weight) in edge_batch {
+            let new_dist = dist_u + weight;
+            
+            // Only update if the new distance is better and within the bound
+            if new_dist <= bound && new_dist < distances[v] {
+                distances[v] = new_dist;
+                predecessors[v] = Some(u);
+                heap.push(std::cmp::Reverse((new_dist, v)));
+                
+                // Add to result vertices if not already visited
+                if !visited[v] {
+                    result_vertices.push(v);
+                    visited[v] = true;
                 }
             }
         }
-
-        let new_bound = k_plus_one_dist.unwrap_or(bound);
-        let result_vec = discovered
-            .into_iter()
+    }
+    
+    /// Calculate the new boundary value based on the result set size
+    #[inline]
+    fn calculate_new_bound(
+        &self,
+        result_size: usize,
+        bound: W,
+        vertices: &[usize],
+        distances: &[W],
+    ) -> W {
+        if result_size <= self.k {
+            return bound;
+        }
+        
+        // Use a more efficient approach to find the maximum distance
+        // For small k, linear scan is faster than sorting
+        let mut max_dist = W::zero();
+        for &v in vertices.iter().take(self.k * 2) {
+            if distances[v] > max_dist {
+                max_dist = distances[v];
+            }
+        }
+        max_dist
+    }
+    
+    /// Optimized mini-Dijkstra for the single-source case
+    fn mini_dijkstra(
+        &self,
+        graph: &G,
+        source: usize,
+        bound: W,
+        distances: &mut Vec<W>,
+        predecessors: &mut Vec<Option<usize>>,
+    ) -> Result<BMSSPResult<W>> {
+        let mut heap = BinaryHeap::with_capacity(self.k * 2);
+        let mut result_vertices = Vec::with_capacity(self.k * 2);
+        let mut visited = vec![false; graph.vertex_count()];
+        
+        // Add source to heap and result
+        heap.push(std::cmp::Reverse((distances[source], source)));
+        result_vertices.push(source);
+        visited[source] = true;
+        
+        // Process at most k vertices
+        let mut processed_count = 0;
+        
+        while let Some(std::cmp::Reverse((dist_u, u))) = heap.pop() {
+            if dist_u > distances[u] || dist_u > bound {
+                continue;
+            }
+            
+            processed_count += 1;
+            if processed_count > self.k {
+                break;
+            }
+            
+            // Use direct iteration for better performance in the single-source case
+            for (v, weight) in graph.outgoing_edges(u) {
+                let new_dist = dist_u + weight;
+                
+                if new_dist <= bound && new_dist < distances[v] {
+                    distances[v] = new_dist;
+                    predecessors[v] = Some(u);
+                    heap.push(std::cmp::Reverse((new_dist, v)));
+                    
+                    if !visited[v] {
+                        result_vertices.push(v);
+                        visited[v] = true;
+                    }
+                }
+            }
+        }
+        
+        let new_bound = self.calculate_new_bound(result_vertices.len(), bound, &result_vertices, distances);
+        
+        let result_vec = result_vertices.into_iter()
             .filter(|&v| distances[v] < new_bound)
             .collect::<Vec<_>>();
             

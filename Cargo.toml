@@ -18,6 +18,16 @@ log = "0.4"           # For logging
 rayon = "1.7"         # For potential parallel operations
 ordered-float = "3.0" # For floating point numbers with Ord trait
 rand = "0.8"          # For generating random graphs
+# Web server dependencies
+axum = "0.7"          # Modern async web framework
+tokio = { version = "1.0", features = ["full"] } # Async runtime
+serde = { version = "1.0", features = ["derive"] } # Serialization
+serde_json = "1.0"    # JSON serialization
+tower = "0.4"         # Middleware
+tower-http = { version = "0.5", features = ["cors", "fs"] } # HTTP utilities
+uuid = { version = "1.0", features = ["v4", "serde"] } # For unique IDs
+chrono = { version = "0.4", features = ["serde"] } # For timestamps
+env_logger = "0.10"   # For logging
 libc = { version = "0.2", optional = true }
 pyo3 = { version = "0.19", features = ["extension-module"], optional = true }
 

@@ -1,0 +1,214 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>FastSSSP - Interactive Algorithm Visualization</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <nav class="navbar navbar-expand-lg navbar-dark bg-primary">
+        <div class="container">
+            <a class="navbar-brand" href="#" title="FastSSSP Home">
+                <strong>FastSSSP</strong> - Interactive Visualization
+            </a>
+            <div class="navbar-nav ms-auto">
+                <div id="status-message" class="status-message"></div>
+            </div>
+        </div>
+    </nav>
+
+    <div class="container-fluid mt-3">
+        <div class="row">
+            <!-- Control Panel -->
+            <div class="col-md-3">
+                <div class="card">
+                    <div class="card-header">
+                        <h5>Graph Generation</h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="mb-3">
+                            <label for="graph-type" class="form-label">Graph Type</label>
+                            <select id="graph-type" class="form-select">
+                                <option value="random">Random</option>
+                                <option value="grid">Grid</option>
+                                <option value="grid-3d">3D Grid</option>
+                                <option value="scale-free">Scale-free</option>
+                                <option value="small-world">Small-world</option>
+                            </select>
+                        </div>
+                        
+                        <div class="mb-3">
+                            <label for="visualization-theme" class="form-label">Visualization Theme</label>
+                            <select id="visualization-theme" class="form-select">
+                                <option value="default">Default</option>
+                                <option value="maze">Laberinto</option>
+                                <option value="city">Gran Ciudad</option>
+                                <option value="farm">Finca Agrícola</option>
+                                <option value="forest">Bosque</option>
+                            </select>
+                        </div>
+                        <div class="mb-3">
+                            <label for="node-count" class="form-label">Number of Nodes</label>
+                            <input type="number" id="node-count" class="form-control" value="100" min="10" max="5000">
+                        </div>
+                        <div class="mb-3">
+                            <label for="edges-per-node" class="form-label">Edges per Node</label>
+                            <input type="number" id="edges-per-node" class="form-control" value="3" min="1" max="10">
+                        </div>
+                        <button id="generate-btn" class="btn btn-primary w-100">Generate Graph</button>
+                    </div>
+                </div>
+
+                <div class="card mt-3">
+                    <div class="card-header">
+                        <h5>Algorithm Execution</h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="mb-3">
+                            <label for="algorithm-select" class="form-label">Algorithm</label>
+                            <select id="algorithm-select" class="form-select">
+                                <option value="dijkstra">Dijkstra</option>
+                                <option value="fast-sssp">FastSSSP</option>
+                                <option value="mini-bmssp">Mini-BMSSP</option>
+                                <option value="smart-sssp">SmartSSSP</option>
+                            </select>
+                        </div>
+                        <div class="mb-3">
+                            <label for="source-node" class="form-label">Source Node</label>
+                            <input type="number" id="source-node" class="form-control" value="0" min="0">
+                        </div>
+                        
+                        <div id="parameter-section" class="mb-3">
+                            <div class="form-check mb-2">
+                                <input class="form-check-input" type="checkbox" id="auto-tune" checked>
+                                <label class="form-check-label" for="auto-tune">Auto-tune Parameters</label>
+                            </div>
+                            <div class="mb-2">
+                                <label for="k-param" class="form-label">Parameter k</label>
+                                <input type="number" id="k-param" class="form-control" disabled>
+                            </div>
+                            <div class="mb-2">
+                                <label for="t-param" class="form-label">Parameter t</label>
+                                <input type="number" id="t-param" class="form-control" disabled>
+                            </div>
+                        </div>
+
+                        <div class="mb-3">
+                            <div class="form-check">
+                                <input class="form-check-input" type="checkbox" id="skip-sweep">
+                                <label class="form-check-label" for="skip-sweep">Skip Final Sweep</label>
+                            </div>
+                            <div class="form-check">
+                                <input class="form-check-input" type="checkbox" id="parallel">
+                                <label class="form-check-label" for="parallel">Parallel Execution</label>
+                            </div>
+                        </div>
+
+                        <button id="run-btn" class="btn btn-success w-100 mb-2">Run Algorithm</button>
+                        <button id="compare-btn" class="btn btn-warning w-100 mb-2">Compare All</button>
+                        <button id="benchmark-btn" class="btn btn-info w-100">Full Benchmark</button>
+                    </div>
+                </div>
+
+                <div class="card mt-3">
+                    <div class="card-header">
+                        <h5>Graph Information</h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="info-item">
+                            <strong>Nodes:</strong> <span id="graph-nodes">0</span>
+                        </div>
+                        <div class="info-item">
+                            <strong>Edges:</strong> <span id="graph-edges">0</span>
+                        </div>
+                        <div class="info-item">
+                            <strong>Avg Degree:</strong> <span id="graph-avg-degree">0</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Visualization Area -->
+            <div class="col-md-6">
+                <div class="card h-100">
+                    <div class="card-header">
+                        <h5>Graph Visualization</h5>
+                    </div>
+                    <div class="card-body p-0">
+                        <div id="graph-container"></div>
+                        <div class="zoom-controls">
+                            <button id="zoomIn" class="btn btn-sm btn-light">+</button>
+                            <button id="zoomOut" class="btn btn-sm btn-light">-</button>
+                            <button id="resetView" class="btn btn-sm btn-light">Reset</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Metrics and Charts -->
+            <div class="col-md-3">
+                <div class="card">
+                    <div class="card-header">
+                        <h5>Performance Metrics</h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="metric-item">
+                            <strong>Execution Time:</strong> <span id="execution-time">-</span>
+                        </div>
+                        <div class="metric-item">
+                            <strong>Nodes Processed:</strong> <span id="nodes-processed">-</span>
+                        </div>
+                        <div class="metric-item">
+                            <strong>Edges Relaxed:</strong> <span id="edges-relaxed">-</span>
+                        </div>
+                        <div class="metric-item">
+                            <strong>Memory Usage:</strong> <span id="memory-usage">-</span>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="card mt-3">
+                    <div class="card-header">
+                        <h5>Performance Chart</h5>
+                    </div>
+                    <div class="card-body">
+                        <canvas id="performance-chart"></canvas>
+                    </div>
+                </div>
+
+                <div class="card mt-3">
+                    <div class="card-header">
+                        <h5>Algorithm Comparison</h5>
+                    </div>
+                    <div class="card-body">
+                        <canvas id="comparison-chart"></canvas>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Scripts -->
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <!-- Three.js y dependencias -->
+    <script src="https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.min.js"></script>
+    
+    <!-- WebGPU support -->
+    <script src="https://cdn.jsdelivr.net/npm/webgpu@0.3.0/index.min.js"></script>
+    
+    <!-- Bootstrap y Chart.js -->
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    
+    <!-- 3D-Force-Graph -->
+    <script src="https://unpkg.com/three-spritetext"></script>
+    <script src="https://unpkg.com/3d-force-graph"></script>
+    
+    <!-- Aplicación -->
+    <script src="js/api-client.js"></script>
+    <script src="js/visualizer.js"></script>
+    <script src="js/app.js"></script>
+</body>
+</html>

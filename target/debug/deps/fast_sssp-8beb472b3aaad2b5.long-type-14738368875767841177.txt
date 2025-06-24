@@ -1,0 +1,1 @@
+fn(axum::extract::State<AppState>, axum::extract::Path<Uuid>) -> impl std::future::Future<Output = std::result::Result<Json<models::Session>, (axum::http::StatusCode, Json<models::ErrorResponse>)>> {get_session}

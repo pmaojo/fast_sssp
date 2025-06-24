@@ -22,6 +22,10 @@ fn main() {
     run_sparse_benchmark(50_000, 200_000);
     run_sparse_benchmark(100_000, 400_000);
     
+    // Extremely large graph test (1M vertices)
+    println!("\n🔬 Testing on extremely large graph (1M vertices)");
+    run_sparse_benchmark(1_000_000, 4_000_000);
+    
     // Run a grid graph benchmark which is common in pathfinding scenarios
     println!("\n🗺️ Testing on grid graphs (common in pathfinding)");
     run_grid_benchmark(100);

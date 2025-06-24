@@ -1,0 +1,1 @@
+fn(axum::extract::State<AppState>, Json<models::GraphGenerationRequest>) -> impl std::future::Future<Output = std::result::Result<Json<models::Session>, (axum::http::StatusCode, Json<models::ErrorResponse>)>> {generate_graph}

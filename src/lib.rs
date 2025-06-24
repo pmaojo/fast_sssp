@@ -13,6 +13,7 @@ pub mod ffi;
 pub mod graph;
 #[cfg(feature = "python")]
 mod python;
+pub mod web;
 
 pub use algorithm::{
     dijkstra::Dijkstra, fast_sssp::FastSSSP, ShortestPathAlgorithm, ShortestPathResult,

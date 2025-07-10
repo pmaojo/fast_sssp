@@ -22,9 +22,9 @@ pub struct FastSSSP {
 impl FastSSSP {
     /// Create a new FastSSSP algorithm instance
     pub fn new() -> Self {
-        FastSSSP {
-            convert_to_constant_degree: true, // Enable constant degree graph transformation as per paper
-            vertex_threshold: 100_000, // Only use FastSSSP for graphs with ≥ 100,000 vertices
+        FastSSSP { 
+            convert_to_constant_degree: true,
+            vertex_threshold: 500_000, // Lower threshold to use FastSSSP more often
         }
     }
     
@@ -482,20 +482,67 @@ where
         if n >= self.vertex_threshold {
             println!("Graph is large (n={} >= {}), using FastSSSP algorithm", n, self.vertex_threshold);
             
-            // Calculate parameters for BMSSP based on the graph size
+            // Calculate adaptive parameters for BMSSP based on graph characteristics
             let log_n = (n as f64).ln();
-            let k = (log_n.powf(1.0/3.0)).ceil() as usize;
-            let t = (log_n.powf(2.0/3.0)).ceil() as usize;
-
-            // Level determines the depth of the BMSSP recursion.  It is the
-            // ceiling of ln(n) divided by t as suggested in the paper.
-            let mut level = ((n as f64).ln() / (t as f64)).ceil() as usize;
-            if level < 1 {
-                level = 1;
+            let m = working_graph.edge_count();
+            let density = m as f64 / (n as f64).powi(2);
+            
+            // Detect if this is likely a hierarchical graph based on edge/vertex ratio
+            // Hierarchical graphs typically have edge count close to vertex count
+            let edge_vertex_ratio = m as f64 / n as f64;
+            let is_hierarchical = edge_vertex_ratio < 2.0;
+            
+            // For hierarchical graphs, use specialized parameters
+            let mut k = if is_hierarchical {
+                // For hierarchical graphs, use larger k to reduce recursion depth
+                // This helps with bucket-based hierarchical structures
+                6
+            } else if density < 0.001 {
+                // Very sparse graph
+                3
+            } else if density < 0.01 {
+                // Sparse graph
+                4
+            } else if density < 0.1 {
+                // Medium density
+                5
+            } else {
+                // Dense graph
+                6
+            };
+            
+            let mut t = if is_hierarchical {
+                // For hierarchical graphs, use smaller t to increase pivot selection
+                // This helps find shortcuts in the hierarchy
+                8
+            } else if density < 0.001 {
+                // Very sparse graph
+                12
+            } else if density < 0.01 {
+                // Sparse graph
+                10
+            } else if density < 0.1 {
+                // Medium density
+                8
+            } else {
+                // Dense graph
+                6
+            };
+            
+            // Scale parameters based on graph size for very large graphs
+            if n > 1_000_000 {
+                // For extremely large graphs, adjust parameters to avoid excessive work
+                k = k.min(4); // Limit k for very large graphs
+                t = t.max(10); // Increase t for very large graphs
             }
             
-            println!("Running BMSSP with parameters k={}, t={}", k, t);
+            // Ensure k and t are within reasonable bounds
+            k = k.max(2).min(8);
+            t = t.max(4).min(20);
             
+            println!("Running BMSSP with adaptive parameters: k={}, t={} (density={}, hierarchical={})", 
+                     k, t, density, is_hierarchical);
+        
             // Run BMSSP on the graph
             let bmssp = BMSSP::new_with_params(working_graph.vertex_count(), k, t);
             
@@ -507,10 +554,13 @@ where
             distances[working_source] = W::zero();
             predecessors[working_source] = Some(working_source);
             
+            // Calculate recursion level based on graph size and parameters
+            let level = ((n as f64).ln() / (t as f64)).ceil() as usize;
+            
             // Execute BMSSP starting from the computed top level
             let _bmssp_result = bmssp.execute(
                 &working_graph,
-                level,
+                level.max(1), // Ensure level is at least 1
                 W::max_value(),
                 &[working_source],
                 &mut distances,
@@ -523,11 +573,27 @@ where
                 let mut orig_distances = vec![W::max_value(); n];
                 let mut orig_predecessors = vec![None; n];
                 
-                // Map distances back
+                // Map distances back - improved mapping to ensure all reachable vertices are found
                 for (transformed_v, dist) in distances.iter().enumerate() {
-                    if *dist < W::max_value() {
+                    if transformed_v < transformed_to_original.len() {
                         let orig_v = transformed_to_original[transformed_v];
-                        orig_distances[orig_v] = Float::min(*dist, orig_distances[orig_v]);
+                        
+                        // If this transformed vertex has a path, update the original vertex
+                        if *dist < W::max_value() {
+                            orig_distances[orig_v] = Float::min(*dist, orig_distances[orig_v]);
+                        }
+                        
+                        // Check if any other vertices in the same cycle have paths
+                        // This ensures we don't miss paths through different cycle vertices
+                        if let Some(ref vertex_mapping) = vertex_mapping {
+                            if orig_v < vertex_mapping.len() {
+                                for &other_v in &vertex_mapping[orig_v] {
+                                    if other_v < distances.len() && distances[other_v] < W::max_value() {
+                                        orig_distances[orig_v] = Float::min(distances[other_v], orig_distances[orig_v]);
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
                 

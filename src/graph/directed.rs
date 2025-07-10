@@ -256,55 +256,129 @@ where
         let mut original_to_transformed = Vec::with_capacity(self.vertex_count());
         let mut transformed_to_original = Vec::new();
         
-        // Create cycle vertices for each original vertex
+        // Optimization: Pre-allocate with estimated size
+        let estimated_transformed_size = self.vertex_count() * 3; // Rough estimate
+        transformed_to_original.reserve(estimated_transformed_size);
+        
+        // Create cycle vertices only for very high-degree vertices
+        // Increasing threshold to reduce transformation overhead
+        const DEGREE_THRESHOLD: usize = 16; // Only create cycles for vertices with degree > threshold
+        
+        // Pre-calculate degrees for all vertices to avoid repeated lookups
+        let mut vertex_degrees = Vec::with_capacity(self.vertex_count());
         for v in 0..self.vertex_count() {
-            // For each original vertex, create vertices for each incoming/outgoing edge
-            let mut cycle_vertices = Vec::new();
-            
-            // Count all neighbors (incoming and outgoing)
             let outgoing_count = self.outgoing_edges.get(&v).map_or(0, |e| e.len());
             let incoming_count = self.incoming_edges.get(&v).map_or(0, |e| e.len());
+            vertex_degrees.push(outgoing_count + incoming_count);
+        }
+        
+        // First pass: create all vertices
+        for v in 0..self.vertex_count() {
+            let total_degree = vertex_degrees[v];
+            let mut cycle_vertices = Vec::new();
             
-            // Create cycle vertices
-            for _ in 0..(outgoing_count + incoming_count).max(1) {
+            if total_degree > DEGREE_THRESHOLD {
+                // For high-degree vertices, create a cycle with optimized size
+                // Use logarithmic scaling to reduce the number of cycle vertices for very high degrees
+                let degree_factor = if total_degree > 100 {
+                    (total_degree as f64).log2().ceil() as usize
+                } else {
+                    (total_degree as f64).sqrt().ceil() as usize / 2
+                };
+                
+                let cycle_size = degree_factor.max(2).min(16); // Limit max cycle size
+                
+                // Create cycle vertices in bulk
+                let start_idx = result.vertex_count();
+                for _ in 0..cycle_size {
+                    result.add_vertex();
+                }
+                
+                // Record cycle vertices
+                for i in 0..cycle_size {
+                    let vertex_idx = start_idx + i;
+                    cycle_vertices.push(vertex_idx);
+                }
+                
+                // Extend transformed_to_original in one operation
+                if result.vertex_count() > transformed_to_original.len() {
+                    transformed_to_original.resize(result.vertex_count(), 0);
+                }
+                
+                // Set all mappings at once
+                for &vertex_idx in &cycle_vertices {
+                    transformed_to_original[vertex_idx] = v;
+                }
+            } else {
+                // For low-degree vertices, just create a single vertex (no cycle)
                 let new_vertex = result.add_vertex();
                 cycle_vertices.push(new_vertex);
-                transformed_to_original.resize(new_vertex + 1, 0);
+                
+                if new_vertex >= transformed_to_original.len() {
+                    transformed_to_original.resize(new_vertex + 1, 0);
+                }
                 transformed_to_original[new_vertex] = v;
-            }
-            
-            // Connect cycle vertices with zero-weight edges
-            for i in 0..cycle_vertices.len() {
-                let from = cycle_vertices[i];
-                let to = cycle_vertices[(i + 1) % cycle_vertices.len()];
-                result.add_edge(from, to, W::zero());
             }
             
             original_to_transformed.push(cycle_vertices);
         }
         
-        // Add edges between cycles
+        // Second pass: add cycle edges (zero-weight) for high-degree vertices
+        for v in 0..self.vertex_count() {
+            let cycle_vertices = &original_to_transformed[v];
+            if cycle_vertices.len() > 1 {
+                // Connect cycle vertices with zero-weight edges
+                // Use a more efficient loop for adding cycle edges
+                let cycle_len = cycle_vertices.len();
+                for i in 0..cycle_len {
+                    let from = cycle_vertices[i];
+                    let to = cycle_vertices[(i + 1) % cycle_len];
+                    result.add_edge(from, to, W::zero());
+                }
+            }
+        }
+        
+        // Third pass: add edges between cycles using larger batches
+        let mut edge_batch = Vec::with_capacity(10000); // Larger batch size for better performance
+        
         for u in 0..self.vertex_count() {
             let u_vertices = &original_to_transformed[u];
             
-            // Create a vector of outgoing edges
-            let mut outgoing_edges = Vec::new();
+            // Get outgoing edges
             if let Some(edges) = self.outgoing_edges.get(&u) {
+                // Skip processing if no edges
+                if edges.is_empty() {
+                    continue;
+                }
+                
                 for &(v, weight) in edges {
-                    outgoing_edges.push((v, weight));
+                    let v_vertices = &original_to_transformed[v];
+                    
+                    // Optimization: For single-vertex mappings, use direct connection
+                    if u_vertices.len() == 1 && v_vertices.len() == 1 {
+                        edge_batch.push((u_vertices[0], v_vertices[0], weight));
+                    } else {
+                        // For cycle vertices, use hash-based distribution
+                        let hash_val = u.wrapping_mul(31).wrapping_add(v);
+                        let u_idx = hash_val % u_vertices.len();
+                        let v_idx = (hash_val >> 4) % v_vertices.len();
+                        
+                        edge_batch.push((u_vertices[u_idx], v_vertices[v_idx], weight));
+                    }
+                    
+                    // Process batch when it gets large
+                    if edge_batch.len() >= 10000 {
+                        for (from, to, w) in edge_batch.drain(..) {
+                            result.add_edge(from, to, w);
+                        }
+                    }
                 }
             }
-            
-            // Add edges to the transformed graph
-            for (idx, (v, weight)) in outgoing_edges.iter().enumerate() {
-                let v_vertices = &original_to_transformed[*v];
-                
-                // Use modulo to handle cases where we have more edges than vertices
-                let u_idx = idx % u_vertices.len();
-                let v_idx = idx % v_vertices.len();
-                
-                result.add_edge(u_vertices[u_idx], v_vertices[v_idx], *weight);
-            }
+        }
+        
+        // Process any remaining edges in the batch
+        for (from, to, w) in edge_batch {
+            result.add_edge(from, to, w);
         }
         
         (result, original_to_transformed, transformed_to_original)

@@ -1,5 +1,5 @@
 use std::fmt::Debug;
-use std::collections::{HashSet, HashMap};
+use std::collections::{HashSet, HashMap, BinaryHeap};
 use std::marker::PhantomData;
 use num_traits::{Float, Zero};
 

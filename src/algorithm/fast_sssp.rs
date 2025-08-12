@@ -28,14 +28,20 @@ pub struct FastSSSP {
     degree_mode: DegreeMode,
     /// Threshold for number of vertices to use FastSSSP over Dijkstra
     vertex_threshold: usize,
+    /// Fraction of vertices considered "small reach" to fall back to Dijkstra (0 disables the check)
+    small_reach_fraction: f64,
+    /// Whether to run a Dijkstra reachability sweep after BMSSP to fix gaps
+    enable_reachability_sweep: bool,
 }
 
 impl FastSSSP {
     /// Create a new FastSSSP algorithm instance with default settings
     pub fn new() -> Self {
         FastSSSP {
-            vertex_threshold: 50_000,
-            degree_mode: DegreeMode::Auto { delta: 256 },
+            vertex_threshold: 10_000,
+            degree_mode: DegreeMode::None,
+            small_reach_fraction: 0.05,
+            enable_reachability_sweep: false,
         }
     }
     
@@ -43,7 +49,9 @@ impl FastSSSP {
     pub fn new_with_mode(mode: DegreeMode) -> Self {
         FastSSSP {
             degree_mode: mode,
-            vertex_threshold: 20_000,
+            vertex_threshold: 10_000,
+            small_reach_fraction: 0.05,
+            enable_reachability_sweep: false,
         }
     }
     
@@ -56,6 +64,18 @@ impl FastSSSP {
     /// Set the vertex threshold for choosing between FastSSSP and Dijkstra
     pub fn with_vertex_threshold(mut self, threshold: usize) -> Self {
         self.vertex_threshold = threshold;
+        self
+    }
+    
+    /// Set the fraction threshold for small reach fallback (0 disables)
+    pub fn with_small_reach_fraction(mut self, fraction: f64) -> Self {
+        self.small_reach_fraction = fraction.max(0.0);
+        self
+    }
+
+    /// Enable or disable the reachability Dijkstra sweep after BMSSP
+    pub fn with_reachability_sweep(mut self, enabled: bool) -> Self {
+        self.enable_reachability_sweep = enabled;
         self
     }
     
@@ -661,21 +681,22 @@ where
         
         // Check if the reachable component is very small
         let reach = self.approx_reachable(&working_graph, working_source, 256);
-        if reach < (0.50 * n as f64) as usize {
-            println!("Reachable component is small ({} < {}), using Dijkstra algorithm", reach, 0.05 * n as f64);
-            return self.run_dijkstra(graph, source);
+        if self.small_reach_fraction > 0.0 {
+            let threshold = (self.small_reach_fraction * n as f64) as usize;
+            if reach < threshold {
+                println!("Reachable component is small ({} < {}), using Dijkstra algorithm", reach, threshold);
+                return self.run_dijkstra(graph, source);
+            }
         }
         
         // Choose algorithm based on graph size
         if n >= self.vertex_threshold {
             println!("Graph is large (n={} >= {}), using FastSSSP algorithm", n, self.vertex_threshold);
             
-            // Calculate parameters for BMSSP based on the graph size
+            // Calculate parameters for BMSSP based on the graph size per paper
             let ln = (n as f64).ln();
-            let mut k = ln.powf(1.0 / 3.0).round() as usize;
-            let mut t = ln.powf(2.0 / 3.0).round() as usize;
-            k = k.max(16);
-            t = t.max(32);
+            let k = ln.powf(1.0 / 3.0).ceil() as usize;
+            let t = ln.powf(2.0 / 3.0).ceil() as usize;
             
             // Level determines the depth of the BMSSP recursion.  It is the
             // ceiling of ln(n) divided by t as suggested in the paper.
@@ -754,8 +775,10 @@ where
                 };
 
                 // Check for reachability issues
-                self.check_reachability(graph, source, &mut result)?;
-
+                if self.enable_reachability_sweep {
+                    self.check_reachability(graph, source, &mut result)?;
+                }
+                
                 Ok(result)
             } else {
                 // No transformation, use results directly
@@ -767,15 +790,17 @@ where
                     predecessors,
                 };
                 
-                // Check and fix reachability issues with a Dijkstra sweep
-                let _ = self.check_reachability::<W, G>(&working_graph, source, &mut result);
+                // Optionally check and fix reachability issues with a Dijkstra sweep
+                if self.enable_reachability_sweep {
+                    let _ = self.check_reachability::<W, G>(&working_graph, source, &mut result);
+                }
                 
                 Ok(result)
             }
         } else {
-            println!("Graph is small (n={} < {}), using Dijkstra algorithm", n, 50_000);
+            println!("Graph is small (n={} < {}), using Dijkstra algorithm", n, self.vertex_threshold);
             
-            // Use Dijkstra for small graphs (n < 50_000)
+            // Use Dijkstra for small graphs (n < vertex_threshold)
             let dijkstra = Dijkstra::new();
             let result = if !transformed_to_original.is_empty() {
                 // When using a transformed graph with Dijkstra, we need to transform the result back

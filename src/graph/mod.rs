@@ -1,5 +1,8 @@
 pub mod traits;
 pub mod directed;
+pub mod hub_split;
+pub mod constant_degree;
+pub mod generators;
 
 pub use traits::{Graph, MutableGraph, GraphTransform, ToConstantDegree};
 pub use directed::DirectedGraph;

@@ -363,19 +363,17 @@ where
         vertices: &[usize],
         distances: &[W],
     ) -> W {
+        // If we have not discovered more than k vertices, keep the current bound
         if result_size <= self.k {
             return bound;
         }
-        
-        // Use a more efficient approach to find the maximum distance
-        // For small k, linear scan is faster than sorting
-        let mut max_dist = W::zero();
-        for &v in vertices.iter().take(self.k * 2) {
-            if distances[v] > max_dist {
-                max_dist = distances[v];
-            }
-        }
-        max_dist
+
+        // Compute the (k+1)-th smallest distance among discovered vertices
+        // This ensures vertices with distance strictly less than this threshold are kept
+        let mut discovered_distances: Vec<W> = vertices.iter().map(|&v| distances[v]).collect();
+        discovered_distances.sort();
+        // Safe because result_size > self.k
+        discovered_distances[self.k]
     }
     
     /// Optimized mini-Dijkstra for the single-source case

@@ -1,161 +1,76 @@
 use std::time::Instant;
-use ordered_float::OrderedFloat;
 use colored::*;
-use std::marker::PhantomData;
+use ordered_float::OrderedFloat;
+use rand::Rng;
 
-use fast_sssp::algorithm::ShortestPathAlgorithm;
 use fast_sssp::algorithm::dijkstra::Dijkstra;
 use fast_sssp::algorithm::fast_sssp::{FastSSSP, DegreeMode};
 use fast_sssp::algorithm::bmssp::BMSSP;
+use fast_sssp::algorithm::traits::ShortestPathAlgorithm;
 use fast_sssp::graph::DirectedGraph;
-use fast_sssp::graph::Graph;
 use fast_sssp::graph::generators::{generate_barabasi_albert, generate_3d_grid, generate_geometric_3d};
+use fast_sssp::graph::Graph;
 
 fn main() {
-    println!("{}", "BMSSP Base Case Benchmark".green().bold());
-    println!("Evaluando la eficiencia del caso base optimizado de BMSSP\n");
+    println!("{}", "BMSSP Benchmark".green().bold());
 
-    // Benchmark en diferentes tipos de grafos
-    benchmark_on_scale_free_graphs();
-    benchmark_on_grid_graphs();
-    benchmark_on_geometric_graphs();
-}
-
-/// Benchmark en grafos scale-free con diferentes tamaños
-fn benchmark_on_scale_free_graphs() {
-    println!("\n{}", "Benchmark en grafos scale-free".yellow().bold());
-    
-    let sizes = [10_000, 50_000, 100_000];
-    let edges_per_node = 5;
-    
-    for &size in &sizes {
-        println!("\nGenerando grafo scale-free con {} nodos...", size);
-        let graph = generate_barabasi_albert(size, edges_per_node);
-        
-        println!("Grafo generado con {} vértices y {} aristas", 
-            graph.vertex_count(), graph.edge_count());
-        
-        // Ejecutar FastSSSP con diferentes configuraciones
-        run_benchmark(&graph, 0);
-    }
-}
-
-/// Benchmark en grafos de rejilla 3D
-fn benchmark_on_grid_graphs() {
-    println!("\n{}", "Benchmark en grafos de rejilla 3D".yellow().bold());
-    
-    let sizes = [(20, 20, 20), (30, 30, 30), (40, 40, 40)];
-    
-    for &(x, y, z) in &sizes {
-        println!("\nGenerando grafo de rejilla 3D {}x{}x{}...", x, y, z);
-        let graph = generate_3d_grid(x, y, z);
-        
-        println!("Grafo generado con {} vértices y {} aristas", 
-            graph.vertex_count(), graph.edge_count());
-        
-        // Ejecutar FastSSSP con diferentes configuraciones
-        run_benchmark(&graph, 0);
-    }
-}
-
-/// Benchmark en grafos geométricos 3D
-fn benchmark_on_geometric_graphs() {
-    println!("\n{}", "Benchmark en grafos geométricos 3D".yellow().bold());
-    
-    let sizes = [10_000, 20_000, 30_000];
-    let radius = 0.1;
-    
-    for &size in &sizes {
-        println!("\nGenerando grafo geométrico 3D con {} nodos...", size);
-        let graph = generate_geometric_3d(size, radius);
-        
-        println!("Grafo generado con {} vértices y {} aristas", 
-            graph.vertex_count(), graph.edge_count());
-        
-        // Ejecutar FastSSSP con diferentes configuraciones
-        run_benchmark(&graph, 0);
-    }
-}
-
-/// Ejecutar benchmark con diferentes configuraciones de FastSSSP
-fn run_benchmark(graph: &DirectedGraph<OrderedFloat<f64>>, source: usize) {
-    // Parámetros para BMSSP
-    let n = graph.vertex_count();
-    let ln = (n as f64).ln();
-    let k_values = [
-        ln.powf(1.0 / 3.0).round() as usize,
-        ln.powf(1.0 / 3.0).round() as usize * 2,
-        ln.powf(1.0 / 3.0).round() as usize / 2,
-    ];
-    let t_values = [
-        ln.powf(2.0 / 3.0).round() as usize,
-        ln.powf(2.0 / 3.0).round() as usize * 2,
-        ln.powf(2.0 / 3.0).round() as usize / 2,
-    ];
-    
-    // Ejecutar Dijkstra como referencia
-    println!("\n🏃 Ejecutando Dijkstra (referencia)...");
+    // Generate a 3D grid graph
+    let (nx, ny, nz) = (50, 50, 50);
+    println!("Generating 3D grid graph {}x{}x{}...", nx, ny, nz);
     let start = Instant::now();
-    let dijkstra = Dijkstra::new();
-    let dijkstra_result = dijkstra.compute_shortest_paths(graph, source).unwrap();
-    let dijkstra_time = start.elapsed();
-    let dijkstra_ms = dijkstra_time.as_secs_f64() * 1000.0;
-    println!("⏱️  Tiempo: {:.2}ms", dijkstra_ms);
-    
-    // Contar vértices alcanzables
-    let reachable = dijkstra_result.distances.iter()
-        .filter(|d| d.is_some())
-        .count();
-    println!("📍 Vértices alcanzables: {}", reachable);
-    
-    // Ejecutar FastSSSP con diferentes parámetros
-    println!("\n🔍 Probando diferentes configuraciones de parámetros k y t:");
-    
-    for &k in &k_values {
-        for &t in &t_values {
-            // Asegurar valores mínimos
-            let k = k.max(2);
-            let t = t.max(2);
-            
-            println!("\n🏃 Ejecutando FastSSSP con k={}, t={}...", k, t);
-            let start = Instant::now();
-            
-            // Usar FastSSSP con los parámetros estándar
-            let mut fast_sssp = FastSSSP::new();
-            fast_sssp = fast_sssp.with_degree_mode(DegreeMode::None);
-            let _fast_sssp_result = fast_sssp.compute_shortest_paths(graph, source).unwrap();
-            let fast_sssp_time = start.elapsed();
-            let fast_sssp_ms = fast_sssp_time.as_secs_f64() * 1000.0;
-            println!("⏱️  Tiempo FastSSSP estándar: {:.2}ms", fast_sssp_ms);
-            
-            // Ahora probar directamente con BMSSP usando los parámetros personalizados
-            println!("\n🔍 Ejecutando BMSSP directamente con k={}, t={}...", k, t);
-            let start = Instant::now();
-            
-            // Crear instancia de BMSSP con parámetros personalizados
-            let bmssp = BMSSP::new_with_params(graph.vertex_count(), k, t);
-            
-            // Preparar estructuras de datos para BMSSP
-            let mut distances = vec![OrderedFloat(f64::INFINITY); graph.vertex_count()];
-            let mut predecessors = vec![None; graph.vertex_count()];
-            distances[source] = OrderedFloat(0.0);
-            
-            // Ejecutar BMSSP
-            let level = (k as f64).log2().ceil() as usize;
-            let _bmssp_result = bmssp.execute(
-                graph,
-                level,
-                OrderedFloat(f64::INFINITY),
-                &[source],
-                &mut distances,
-                &mut predecessors
-            ).unwrap();
-            
-            let bmssp_time = start.elapsed();
-            let bmssp_ms = bmssp_time.as_secs_f64() * 1000.0;
-            println!("⏱️  Tiempo BMSSP directo: {:.2}ms", bmssp_ms);
-            println!("📊 Mejora vs FastSSSP: {:.2}x", fast_sssp_ms / bmssp_ms);
-            println!("📊 Ratio vs Dijkstra: {:.2}x", bmssp_ms / dijkstra_ms);
+    let graph = generate_3d_grid(nx, ny, nz);
+    let gen_time = start.elapsed();
+    println!("Generated graph with {} vertices and {} edges in {:.2?}", graph.vertex_count(), graph.edge_count(), gen_time);
+
+    // Pick random source
+    let mut rng = rand::thread_rng();
+    let source = rng.gen_range(0..graph.vertex_count());
+    println!("Source vertex: {}", source);
+
+    // Compare BMSSP parameters
+    let params = vec![(2, 4), (3, 6), (4, 8)];
+
+    for (k, t) in params {
+        println!("\nTesting BMSSP with k={}, t={}", k, t);
+        let bmssp = BMSSP::<OrderedFloat<f64>, DirectedGraph<OrderedFloat<f64>>>::new_with_params(graph.vertex_count(), k, t);
+
+        // Prepare containers
+        let mut distances = vec![OrderedFloat(f64::INFINITY); graph.vertex_count()];
+        let mut predecessors = vec![None; graph.vertex_count()];
+
+        // Run Dijkstra baseline
+        let start = Instant::now();
+        let dijkstra = Dijkstra::new();
+        let dijkstra_result = dijkstra.compute_shortest_paths(&graph, source).unwrap();
+        let dijkstra_time = start.elapsed();
+        println!("Dijkstra time: {:.2?}", dijkstra_time);
+
+        // Run FastSSSP baseline
+        let start = Instant::now();
+        let fast_sssp = FastSSSP::new().with_degree_mode(DegreeMode::Auto { delta: 256 });
+        let fast_result = fast_sssp.compute_shortest_paths(&graph, source).unwrap();
+        let fast_time = start.elapsed();
+        println!("FastSSSP time: {:.2?}", fast_time);
+
+        // Execute BMSSP base case for demonstration
+        let bound = OrderedFloat(1000.0);
+        let sources = vec![source];
+        match bmssp.execute(&graph, 0, bound, &sources, &mut distances, &mut predecessors) {
+            Ok(res) => println!("BMSSP base case: new_bound={:.2}, vertices={}", res.new_bound.0, res.vertices.len()),
+            Err(e) => println!("BMSSP error: {:?}", e),
+        }
+
+        // Verify correctness with Dijkstra on a sample
+        let mut mismatches = 0;
+        for i in 0..graph.vertex_count().min(1000) {
+            let d_fast = fast_result.distances[i].map(|x| x.0);
+            let d_dij = dijkstra_result.distances[i].map(|x| x.0);
+            if d_fast != d_dij { mismatches += 1; }
+        }
+        if mismatches == 0 {
+            println!("✓ FastSSSP matches Dijkstra on sampled vertices");
+        } else {
+            println!("⚠️  {} mismatches between FastSSSP and Dijkstra on sample", mismatches);
         }
     }
 }

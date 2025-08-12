@@ -1,57 +1,49 @@
-use fast_sssp::{DirectedGraph, FastSSSP, Dijkstra, ShortestPathAlgorithm};
-use fast_sssp::graph::{Graph, MutableGraph};
+use std::time::Instant;
+use colored::*;
 use ordered_float::OrderedFloat;
+use fast_sssp::algorithm::ShortestPathAlgorithm;
+use fast_sssp::algorithm::dijkstra::Dijkstra;
+use fast_sssp::algorithm::fast_sssp::{FastSSSP, DegreeMode};
+use fast_sssp::graph::DirectedGraph;
+use fast_sssp::graph::generators::{generate_3d_grid, generate_barabasi_albert};
+use fast_sssp::graph::Graph;
 
 fn main() {
-    // Create a simple directed graph
-    let mut graph = DirectedGraph::new();
-    
-    // Add vertices (0-4)
-    for _ in 0..5 {
-        graph.add_vertex();
-    }
-    
-    // Add edges with weights
-    graph.add_edge(0, 1, OrderedFloat(10.0));
-    graph.add_edge(0, 2, OrderedFloat(5.0));
-    graph.add_edge(1, 3, OrderedFloat(1.0));
-    graph.add_edge(2, 1, OrderedFloat(3.0));
-    graph.add_edge(2, 3, OrderedFloat(9.0));
-    graph.add_edge(2, 4, OrderedFloat(2.0));
-    graph.add_edge(3, 4, OrderedFloat(4.0));
-    graph.add_edge(4, 0, OrderedFloat(7.0));
-    graph.add_edge(4, 3, OrderedFloat(6.0));
-    
-    // Source vertex
-    let source = 0;
-    
-    // Compare FastSSSP with classic Dijkstra
-    println!("--- Testing on a simple graph ---");
+    println!("{}", "Fast SSSP Simple Example".green().bold());
+
+    // Create a simple graph
+    let start = Instant::now();
+    let graph = generate_3d_grid(20, 20, 20);
+    let gen_time = start.elapsed().as_secs_f64();
+
     println!("Graph has {} vertices and {} edges", graph.vertex_count(), graph.edge_count());
-    
-    // Run the Fast SSSP algorithm
-    let fast_sssp = FastSSSP::new();
-    let fast_result = fast_sssp.compute_shortest_paths(&graph, source).unwrap();
-    
-    println!("\n{} algorithm results:", <FastSSSP as ShortestPathAlgorithm<OrderedFloat<f64>, DirectedGraph<OrderedFloat<f64>>>>::name(&fast_sssp));
+    println!("Graph generated in {:.2} seconds", gen_time);
+
+    // Run Dijkstra
+    let dijkstra = Dijkstra::new();
+    let source = 0;
+    let result = dijkstra.compute_shortest_paths(&graph, source).unwrap();
+
+    // Print distances to first 10 vertices
     for target in 1..graph.vertex_count() {
-        match fast_result.distances[target] {
-            None => println!("  No path to {}", target),
-            Some(dist) => println!("  Distance to {}: {:.1}", target, dist.into_inner()),
+        if target > 10 { break; }
+        if let Some(dist) = result.distances[target] {
+            println!("Distance from {} to {}: {:.2}", source, target, dist.0);
         }
     }
-    
-    // Run classic Dijkstra's algorithm
-    let dijkstra = Dijkstra::new();
-    let dijkstra_result = dijkstra.compute_shortest_paths(&graph, source).unwrap();
-    
-    println!("\n{} algorithm results:", <Dijkstra as ShortestPathAlgorithm<OrderedFloat<f64>, DirectedGraph<OrderedFloat<f64>>>>::name(&dijkstra));
-    for v in 0..graph.vertex_count() {
-        if let Some(dist) = dijkstra_result.distances[v] {
-            let path = <Dijkstra as ShortestPathAlgorithm<OrderedFloat<f64>, DirectedGraph<OrderedFloat<f64>>>>::get_path(&dijkstra, &dijkstra_result, v).unwrap();
-            println!("Vertex {}: distance = {:.1}, path = {:?}", v, dist.into_inner(), path);
-        } else {
-            println!("Vertex {}: unreachable", v);
-        }
+
+    // Run FastSSSP with HubSplit transformation enabled automatically
+    let fast_sssp = FastSSSP::new().with_degree_mode(DegreeMode::Auto { delta: 256 });
+    let start = Instant::now();
+    let result = fast_sssp.compute_shortest_paths(&graph, source).unwrap();
+    let elapsed = start.elapsed().as_secs_f64();
+
+    println!("FastSSSP computed shortest paths in {:.2} seconds", elapsed);
+
+    // Print path to the 10th vertex
+    use fast_sssp::algorithm::ShortestPathAlgorithm as _;
+    let path = <FastSSSP as fast_sssp::algorithm::traits::ShortestPathAlgorithm<OrderedFloat<f64>, DirectedGraph<OrderedFloat<f64>>>>::get_path(&fast_sssp, &result, 10);
+    if let Some(path) = path {
+        println!("Path from 0 to 10: {:?}", path);
     }
 }

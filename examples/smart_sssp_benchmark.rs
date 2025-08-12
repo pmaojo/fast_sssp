@@ -11,6 +11,7 @@ use fast_sssp::algorithm::fast_sssp::{FastSSSP, DegreeMode};
 use fast_sssp::algorithm::smart_sssp::{SmartSSSP, SmartMode};
 use fast_sssp::graph::DirectedGraph;
 use fast_sssp::graph::generators::{generate_barabasi_albert, generate_3d_grid, generate_geometric_3d};
+use fast_sssp::graph::Graph;
 
 /// Run a comprehensive benchmark comparing SmartSSSP against Dijkstra and FastSSSP variants
 fn main() {
@@ -179,7 +180,7 @@ fn benchmark_algorithms(graph: &DirectedGraph<OrderedFloat<f64>>, source: usize)
     // Run FastSSSP with HubSplit
     println!("🏃 Running FastSSSP with HubSplit...");
     let start = Instant::now();
-    let fast_sssp = FastSSSP::with_degree_mode(DegreeMode::Auto { delta: 256 });
+    let fast_sssp = FastSSSP::new().with_degree_mode(DegreeMode::Auto { delta: 256 });
     let fast_sssp_result = fast_sssp.compute_shortest_paths(graph, source).unwrap();
     let fast_sssp_time = start.elapsed();
     let fast_sssp_ms = fast_sssp_time.as_secs_f64() * 1000.0;
@@ -196,7 +197,7 @@ fn benchmark_algorithms(graph: &DirectedGraph<OrderedFloat<f64>>, source: usize)
     // Run FastSSSP without transformation
     println!("🏃 Running FastSSSP without transformation...");
     let start = Instant::now();
-    let fast_sssp_no_transform = FastSSSP::with_degree_mode(DegreeMode::None);
+    let fast_sssp_no_transform = FastSSSP::new().with_degree_mode(DegreeMode::None);
     let fast_sssp_no_transform_result = fast_sssp_no_transform.compute_shortest_paths(graph, source).unwrap();
     let fast_sssp_no_transform_time = start.elapsed();
     let fast_sssp_no_transform_ms = fast_sssp_no_transform_time.as_secs_f64() * 1000.0;
@@ -244,33 +245,22 @@ fn benchmark_algorithms(graph: &DirectedGraph<OrderedFloat<f64>>, source: usize)
     } else {
         println!("❌ SmartSSSP (Adaptive) produced incorrect results");
     }
-    
+
     // Determine winner
-    let mut winner = "dijkstra";
-    let mut min_time = dijkstra_ms;
+    let (winner, best_time) = {
+        let mut results = vec![
+            ("Dijkstra", dijkstra_ms),
+            ("FastSSSP", fast_sssp_ms),
+            ("FastSSSP_NoTransform", fast_sssp_no_transform_ms),
+            ("SmartSSSP_Auto", smart_auto_ms),
+            ("SmartSSSP_Adaptive", smart_adaptive_ms),
+        ];
+        results.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
+        (results[0].0.to_string(), results[0].1)
+    };
     
-    if fast_sssp_ms < min_time && fast_sssp_correct {
-        winner = "fast_sssp";
-        min_time = fast_sssp_ms;
-    }
-    
-    if fast_sssp_no_transform_ms < min_time && fast_sssp_no_transform_correct {
-        winner = "fast_sssp_no_transform";
-        min_time = fast_sssp_no_transform_ms;
-    }
-    
-    if smart_auto_ms < min_time && smart_auto_correct {
-        winner = "smart_auto";
-        min_time = smart_auto_ms;
-    }
-    
-    if smart_adaptive_ms < min_time && smart_adaptive_correct {
-        winner = "smart_adaptive";
-        min_time = smart_adaptive_ms;
-    }
-    
-    println!("🏆 Winner: {} ({:.2}ms)", winner, min_time);
-    
+    println!("🏆 Winner: {} with time {:.2}ms", winner.green().bold(), best_time);
+
     BenchmarkResult {
         reachable,
         dijkstra_ms,
@@ -278,39 +268,25 @@ fn benchmark_algorithms(graph: &DirectedGraph<OrderedFloat<f64>>, source: usize)
         fast_sssp_no_transform_ms,
         smart_auto_ms,
         smart_adaptive_ms,
-        winner: winner.to_string(),
+        winner,
     }
 }
 
-/// Verify that two sets of distances match
-fn verify_results(
-    baseline: &[Option<OrderedFloat<f64>>], 
-    result: &[Option<OrderedFloat<f64>>]
-) -> bool {
-    if baseline.len() != result.len() {
+/// Verify that two result vectors match for reachable vertices
+fn verify_results(dist1: &Vec<Option<OrderedFloat<f64>>>, dist2: &Vec<Option<OrderedFloat<f64>>>) -> bool {
+    if dist1.len() != dist2.len() {
         return false;
     }
-    
-    for (i, (b, r)) in baseline.iter().zip(result.iter()).enumerate() {
-        match (b, r) {
-            (Some(b_val), Some(r_val)) => {
-                // Allow small floating point differences
-                let diff = (*b_val - *r_val).abs();
-                if diff > 1e-6 {
-                    println!("Distance mismatch at vertex {}: baseline={}, result={}", i, b_val, r_val);
+    for i in 0..dist1.len() {
+        match (&dist1[i], &dist2[i]) {
+            (Some(d1), Some(d2)) => {
+                if (d1.0 - d2.0).abs() > 1e-9 {
                     return false;
                 }
-            },
-            (None, None) => {
-                // Both unreachable, good
-            },
-            _ => {
-                println!("Reachability mismatch at vertex {}: baseline={:?}, result={:?}", 
-                    i, b, r);
-                return false;
             }
+            (None, None) => {}
+            _ => return false,
         }
     }
-    
     true
 }

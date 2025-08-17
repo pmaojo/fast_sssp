@@ -200,7 +200,10 @@ where
         let result_vec = result_vertices.into_iter().collect::<Vec<_>>();
         
         Ok(BMSSPResult {
-            new_bound: if block_list.is_empty() { bound } else { prev_bound },
+            // Return the smallest bound encountered. If no vertices were
+            // processed (`block_list` empty), `prev_bound` remains equal to
+            // `bound`, so the minimum is the original bound.
+            new_bound: std::cmp::min(bound, prev_bound),
             vertices: result_vec,
         })
     }

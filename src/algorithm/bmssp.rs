@@ -1,10 +1,10 @@
-use std::fmt::Debug;
-use std::collections::{HashSet, HashMap, BinaryHeap};
-use std::marker::PhantomData;
 use num_traits::{Float, Zero};
+use std::collections::{BinaryHeap, HashMap, HashSet};
+use std::fmt::Debug;
+use std::marker::PhantomData;
 
+use crate::data_structures::{BinaryHeapWrapper, BlockList};
 use crate::graph::Graph;
-use crate::data_structures::{BlockList, BinaryHeapWrapper};
 use crate::{Error, Result};
 
 /// Implementation of the Bounded Multi-Source Shortest Path (BMSSP) algorithm
@@ -538,6 +538,10 @@ where
             tree_sizes.insert(s, 1); // Start with size 1 (just the root)
         }
 
+        // Convert sources to a HashSet for constant-time lookups when
+        // checking if a vertex is one of the sources during root finding.
+        let source_set: HashSet<usize> = sources.iter().copied().collect();
+
         // Build the forest structure
         for &v in &work_set {
             if let Some(pred) = predecessors[v] {
@@ -549,9 +553,9 @@ where
                     let mut current = pred;
                     let mut root = current;
 
-                    // Find the root of this tree
+                    // Find the root of this tree using constant-time source lookup
                     while let Some(parent) = predecessors[current] {
-                        if parent == current || sources.contains(&current) {
+                        if parent == current || source_set.contains(&current) {
                             root = current;
                             break;
                         }

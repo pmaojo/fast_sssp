@@ -86,12 +86,19 @@ fn run_algorithms_on_graph(graph: &DirectedGraph<OrderedFloat<f64>>) {
     println!("SmartSSSP correct: {}", correct_smart);
 }
 
-fn verify_results(dist1: &Vec<Option<OrderedFloat<f64>>>, dist2: &Vec<Option<OrderedFloat<f64>>>>) -> bool {
-    if dist1.len() != dist2.len() { return false; }
+fn verify_results(
+    dist1: &Vec<Option<OrderedFloat<f64>>>,
+    dist2: &Vec<Option<OrderedFloat<f64>>>,
+) -> bool {
+    if dist1.len() != dist2.len() {
+        return false;
+    }
     for i in 0..dist1.len() {
         match (&dist1[i], &dist2[i]) {
             (Some(d1), Some(d2)) => {
-                if (d1.0 - d2.0).abs() > 1e-9 { return false; }
+                if (d1.0 - d2.0).abs() > 1e-9 {
+                    return false;
+                }
             }
             (None, None) => {}
             _ => return false,

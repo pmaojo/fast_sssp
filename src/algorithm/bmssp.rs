@@ -3,7 +3,7 @@ use std::collections::{BinaryHeap, HashMap, HashSet};
 use std::fmt::Debug;
 use std::marker::PhantomData;
 
-use crate::data_structures::{BinaryHeapWrapper, BlockList};
+use crate::data_structures::BlockList;
 use crate::graph::Graph;
 use crate::{Error, Result};
 
@@ -529,8 +529,7 @@ where
             return Ok((sources.to_vec(), work_set));
         }
 
-        // Build shortest path forest
-        let mut forest = HashMap::new();
+        // Compute the size of the shortest-path trees rooted at each source
         let mut tree_sizes = HashMap::new();
 
         // Initialize tree sizes for sources
@@ -542,12 +541,11 @@ where
         // checking if a vertex is one of the sources during root finding.
         let source_set: HashSet<usize> = sources.iter().copied().collect();
 
-        // Build the forest structure
+        // Traverse work set and accumulate tree sizes
         for &v in &work_set {
             if let Some(pred) = predecessors[v] {
                 if pred != v {
                     // Skip self-loops
-                    forest.entry(pred).or_insert_with(Vec::new).push(v);
 
                     // Increment tree size for the root of this tree
                     let mut current = pred;

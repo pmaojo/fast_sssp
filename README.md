@@ -1,6 +1,7 @@
 # Fast SSSP
 
-
+* experimental and WIP
+  
 A Rust implementation of the O(m log^(2/3) n) Single-Source Shortest Paths algorithm for directed graphs with non-negative edge weights, as described in the paper:
 
 > "Breaking the Sorting Barrier for Directed Single-Source Shortest Paths" by Ran Duan, Jiayi Mao, Xiao Mao, Xinkai Shu, and Longhui Yin (2025)

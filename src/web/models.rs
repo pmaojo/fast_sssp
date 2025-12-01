@@ -1,5 +1,4 @@
 use chrono::{DateTime, Utc};
-use ordered_float::OrderedFloat;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use uuid::Uuid;
@@ -57,8 +56,12 @@ pub struct GraphGenerationRequest {
     pub grid_dimensions: Option<(usize, usize, usize)>,
 }
 
-fn default_edges_per_node() -> usize { 3 }
-fn default_radius() -> f64 { 0.2 }
+fn default_edges_per_node() -> usize {
+    3
+}
+fn default_radius() -> f64 {
+    0.2
+}
 
 /// Parameters for algorithm execution
 #[derive(Debug, Deserialize)]

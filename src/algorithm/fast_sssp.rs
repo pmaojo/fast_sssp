@@ -261,55 +261,6 @@ impl FastSSSP {
         visited
     }
 
-    /// Estimate the maximum degree of vertices reachable from the source
-    fn est_max_degree_reachable<W, G>(&self, g: &G, s: usize, max_scan: usize) -> usize
-    where
-        W: Float + Zero + Debug + Copy + Ord,
-        G: Graph<W>,
-    {
-        use std::collections::VecDeque;
-        let mut q = VecDeque::new();
-        let mut seen = vec![false; g.vertex_count()];
-        q.push_back(s);
-        seen[s] = true;
-        let mut scanned = 0;
-        let mut max_degree = 0;
-
-        while let Some(u) = q.pop_front() {
-            // Check degree of this vertex
-            let out_deg = g.outgoing_edges(u).count();
-            let in_deg = g.incoming_edges(u).count();
-            max_degree = max_degree.max(out_deg).max(in_deg);
-
-            // Scan neighbors
-            for (v, _) in g.outgoing_edges(u) {
-                scanned += 1;
-                if scanned > max_scan {
-                    return max_degree;
-                }
-                if !seen[v] {
-                    seen[v] = true;
-                    q.push_back(v);
-                }
-            }
-        }
-        max_degree
-    }
-
-    /// Choose optimal k and t parameters based on reachable component size
-    fn choose_params(&self, reach_est: usize, _avg_deg: f64) -> (usize, usize) {
-        // Base k on square root of reachable vertices
-        let k = (reach_est as f64).sqrt().ceil() as usize;
-        // t should be roughly 2*log2(k)
-        let t = (2.0 * (k as f64).log2()).ceil() as usize;
-
-        // Apply reasonable bounds
-        let k_bounded = k.max(8).min(64);
-        let t_bounded = t.max(4).min(32);
-
-        (k_bounded, t_bounded)
-    }
-
     /// Checks for reachability issues and fixes them by running a Dijkstra sweep
     fn check_reachability<W, G>(
         &self,
@@ -626,55 +577,6 @@ impl FastSSSP {
         println!("Using Dijkstra's algorithm directly");
         let dijkstra = Dijkstra::new();
         dijkstra.compute_shortest_paths(graph, source)
-    }
-
-    fn compute_dijkstra<W, G>(
-        &self,
-        graph: &G,
-        source: usize,
-        distances: &mut Vec<W>,
-        predecessors: &mut Vec<Option<usize>>,
-    ) -> Result<ShortestPathResult<W>>
-    where
-        W: Float + Zero + Debug + Copy + Ord,
-        G: Graph<W> + Clone,
-    {
-        use std::cmp::Reverse;
-        use std::collections::BinaryHeap;
-
-        // Initialize priority queue
-        let mut queue = BinaryHeap::new();
-        queue.push(Reverse((distances[source], source)));
-
-        // Run Dijkstra's algorithm
-        while let Some(Reverse((dist_u, u))) = queue.pop() {
-            // Skip if we've found a better path
-            if dist_u > distances[u] {
-                continue;
-            }
-
-            // Relax outgoing edges
-            for (v, weight) in graph.outgoing_edges(u) {
-                let new_dist = dist_u + weight;
-                if new_dist < distances[v] {
-                    distances[v] = new_dist;
-                    predecessors[v] = Some(u);
-                    queue.push(Reverse((new_dist, v)));
-                }
-            }
-        }
-
-        // Convert to ShortestPathResult format
-        let final_distances: Vec<Option<W>> = distances
-            .iter()
-            .map(|&d| if d == W::max_value() { None } else { Some(d) })
-            .collect();
-
-        Ok(ShortestPathResult {
-            distances: final_distances,
-            predecessors: predecessors.clone(),
-            source,
-        })
     }
 
     #[cfg(test)]

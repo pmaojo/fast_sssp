@@ -97,7 +97,7 @@ where
     }
     
     fn has_vertex(&self, vertex: usize) -> bool {
-        vertex < self.vertex_count
+        self.outgoing_edges.contains_key(&vertex)
     }
     
     fn has_edge(&self, from: usize, to: usize) -> bool {

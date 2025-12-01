@@ -295,6 +295,17 @@ class GraphVisualizer {
         // Reset source node
         this.sourceNode = null;
     }
+
+    /**
+     * Reset the visualizer state, clearing animations and node/link styling
+     */
+    reset() {
+        this.pauseAnimation();
+        this.animationSteps = [];
+        this.animationStep = 0;
+        this.resetGraphState();
+        this.updateProgressChart();
+    }
     
     /**
      * Update node colors based on their states
@@ -398,6 +409,28 @@ class GraphVisualizer {
                 this.animateStep();
             }
         }, 1000 / this.animationSpeed);
+    }
+
+    /**
+     * Play a full sequence of animation steps with the existing step machinery
+     * @param {Array} steps - Steps emitted by the algorithm execution
+     */
+    async animateSteps(steps) {
+        if (!steps || !steps.length) return;
+
+        this.setAnimationSteps(steps);
+        this.isAnimating = true;
+
+        while (this.isAnimating && this.animationStep < this.animationSteps.length) {
+            const step = this.animationSteps[this.animationStep];
+            this.applyAnimationStep(step);
+            this.animationStep++;
+            this.updateProgressChart();
+
+            await new Promise(resolve => setTimeout(resolve, 1000 / this.animationSpeed));
+        }
+
+        this.isAnimating = false;
     }
     
     /**
@@ -516,6 +549,22 @@ class GraphVisualizer {
             this.updateNodeColors();
         }
     }
+
+    /**
+     * Update a node's stored distance value
+     * @param {number} nodeId - ID of the node to update
+     * @param {number} distance - Computed distance from the source
+     */
+    updateNodeDistance(nodeId, distance) {
+        if (!this.graph) return;
+
+        const node = this.graph.nodes.find(n => n.id === nodeId);
+        if (node) {
+            node.distance = distance;
+            node.isVisited = distance !== Infinity;
+            this.updateNodeColors();
+        }
+    }
     
     /**
      * Highlight the shortest path from source to target
@@ -610,7 +659,69 @@ class GraphVisualizer {
                 }
             });
         }
-        
+
+        this.updateNodeColors();
+    }
+
+    /**
+     * Highlight the full shortest-path tree derived from predecessor data
+     * @param {Array|Object} predecessors - Mapping from node id to its predecessor
+     */
+    highlightShortestPaths(predecessors) {
+        if (!this.graph || !predecessors) return;
+
+        const theme = this.themes[this.visualizationTheme] || this.themes.default;
+        const sourceInput = document.getElementById('source-node');
+        const parsedSource = sourceInput ? parseInt(sourceInput.value, 10) : NaN;
+        if (!Number.isNaN(parsedSource)) {
+            this.sourceNode = parsedSource;
+        }
+
+        // Clear previous highlights
+        this.graph.links.forEach(link => {
+            link.isPath = false;
+            link.color = theme.linkColor;
+            link.width = 2;
+            link.particleWidth = 0;
+            link.particleSpeed = 0;
+        });
+
+        this.graph.nodes.forEach(node => {
+            node.isVisited = false;
+            node.isFrontier = false;
+            node.isPivot = false;
+            node.isCurrent = false;
+        });
+
+        // Build shortest path tree
+        this.graph.nodes.forEach(node => {
+            if (node.id === this.sourceNode) {
+                node.isVisited = true;
+                node.color = this.nodeColors.source;
+                return;
+            }
+
+            const predecessor = predecessors[node.id];
+            if (predecessor === undefined || predecessor === null) return;
+
+            const link = this.graph.links.find(l =>
+                (l.source.id === node.id && l.target.id === predecessor) ||
+                (l.source.id === predecessor && l.target.id === node.id)
+            );
+
+            if (link) {
+                link.isPath = true;
+                link.color = theme.pathColor;
+                link.width = 4;
+                link.particleWidth = 4;
+                link.particleSpeed = 0.02;
+                link.particleColor = theme.particleColor;
+            }
+
+            node.isVisited = true;
+            node.color = this.nodeColors.visited;
+        });
+
         this.updateNodeColors();
     }
     

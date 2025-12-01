@@ -1,13 +1,37 @@
-use std::fmt::Debug;
 use num_traits::{Float, Zero};
+use std::fmt::Debug;
 
-use crate::graph::{Graph, GraphTransform, MutableGraph};
-use crate::graph::traits::ToConstantDegree;
-use crate::graph::hub_split::HubSplit;
-use crate::algorithm::{ShortestPathAlgorithm, ShortestPathResult};
 use crate::algorithm::bmssp::BMSSP;
 use crate::algorithm::dijkstra::Dijkstra;
+use crate::algorithm::{ShortestPathAlgorithm, ShortestPathResult};
+use crate::graph::hub_split::HubSplit;
+use crate::graph::traits::ToConstantDegree;
+use crate::graph::{Graph, GraphTransform, MutableGraph};
 use crate::{Error, Result};
+
+#[cfg(test)]
+use std::sync::{
+    atomic::{AtomicUsize, Ordering},
+    Mutex,
+};
+
+#[cfg(test)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BmsspExecutionPlan {
+    pub working_vertices: usize,
+    pub reach_estimate: usize,
+    pub planning_vertices: usize,
+    pub reachability_threshold: usize,
+    pub k: usize,
+    pub t: usize,
+    pub level: usize,
+}
+
+#[cfg(test)]
+static BMSSP_CALL_COUNT: AtomicUsize = AtomicUsize::new(0);
+
+#[cfg(test)]
+static LAST_PLAN: Mutex<Option<BmsspExecutionPlan>> = Mutex::new(None);
 
 /// Defines how to handle graph degree transformation
 #[derive(Debug, Clone, Copy)]
@@ -32,9 +56,27 @@ pub struct FastSSSP {
     small_reach_fraction: f64,
     /// Whether to run a Dijkstra reachability sweep after BMSSP to fix gaps
     enable_reachability_sweep: bool,
+    #[cfg(test)]
+    /// When enabled during tests, compute only the plan but execute Dijkstra for speed and determinism
+    plan_only: bool,
 }
 
 impl FastSSSP {
+    fn bmssp_parameters(planning_vertices: usize) -> (usize, usize, usize) {
+        let ln = (planning_vertices as f64).ln();
+        let k = ln.powf(1.0 / 3.0).ceil().max(1.0) as usize;
+        let t = ln.powf(2.0 / 3.0).ceil().max(1.0) as usize;
+
+        // Level determines the depth of the BMSSP recursion. It is the
+        // ceiling of ln(n) divided by t as suggested in the paper.
+        let mut level = ((planning_vertices as f64).ln() / (t as f64)).ceil() as usize;
+        if level < 1 {
+            level = 1;
+        }
+
+        (k, t, level)
+    }
+
     /// Create a new FastSSSP algorithm instance with default settings
     pub fn new() -> Self {
         FastSSSP {
@@ -42,9 +84,11 @@ impl FastSSSP {
             degree_mode: DegreeMode::None,
             small_reach_fraction: 0.05,
             enable_reachability_sweep: false,
+            #[cfg(test)]
+            plan_only: false,
         }
     }
-    
+
     /// Create a new FastSSSP algorithm instance with specified degree mode
     pub fn new_with_mode(mode: DegreeMode) -> Self {
         FastSSSP {
@@ -52,21 +96,23 @@ impl FastSSSP {
             vertex_threshold: 10_000,
             small_reach_fraction: 0.05,
             enable_reachability_sweep: false,
+            #[cfg(test)]
+            plan_only: false,
         }
     }
-    
+
     /// Set the degree mode for graph transformation
     pub fn with_degree_mode(mut self, mode: DegreeMode) -> Self {
         self.degree_mode = mode;
         self
     }
-    
+
     /// Set the vertex threshold for choosing between FastSSSP and Dijkstra
     pub fn with_vertex_threshold(mut self, threshold: usize) -> Self {
         self.vertex_threshold = threshold;
         self
     }
-    
+
     /// Set the fraction threshold for small reach fallback (0 disables)
     pub fn with_small_reach_fraction(mut self, fraction: f64) -> Self {
         self.small_reach_fraction = fraction.max(0.0);
@@ -78,7 +124,14 @@ impl FastSSSP {
         self.enable_reachability_sweep = enabled;
         self
     }
-    
+
+    #[cfg(test)]
+    /// In tests, skip executing BMSSP but still record the plan for verification
+    pub fn with_plan_only(mut self, plan_only: bool) -> Self {
+        self.plan_only = plan_only;
+        self
+    }
+
     /// Maps a result from the transformed graph back to the original graph
     #[allow(dead_code)]
     fn map_result_to_original<W, G, T>(
@@ -87,8 +140,7 @@ impl FastSSSP {
         result: &mut ShortestPathResult<W>,
         original_vertex_count: usize,
         original_source: usize,
-    )
-    where
+    ) where
         W: Float + Zero + Debug + Copy + Ord,
         G: Graph<W> + Clone + MutableGraph<W>,
         T: GraphTransform<W, G>,
@@ -96,43 +148,43 @@ impl FastSSSP {
         // Initialize distances and predecessors for the original graph
         let mut original_distances = vec![None; original_vertex_count];
         let mut original_predecessors = vec![None; original_vertex_count];
-        
+
         // Process each vertex in the transformed graph
         for v in 0..result.distances.len() {
             if let Some(dist) = result.distances[v] {
                 let original_v = transformer.map_vertex_to_original(v);
-                
+
                 // Update distance if it's better than what we have
                 match original_distances[original_v] {
                     None => {
                         original_distances[original_v] = Some(dist);
-                        
+
                         // Map predecessor if it exists
                         if let Some(pred) = result.predecessors[v] {
                             let original_pred = transformer.map_vertex_to_original(pred);
                             original_predecessors[original_v] = Some(original_pred);
                         }
-                    },
+                    }
                     Some(current_dist) if dist < current_dist => {
                         original_distances[original_v] = Some(dist);
-                        
+
                         // Map predecessor if it exists
                         if let Some(pred) = result.predecessors[v] {
                             let original_pred = transformer.map_vertex_to_original(pred);
                             original_predecessors[original_v] = Some(original_pred);
                         }
-                    },
-                    _ => {}, // Keep existing better distance
+                    }
+                    _ => {} // Keep existing better distance
                 }
             }
         }
-        
+
         // Update the result with the original graph data
         result.distances = original_distances;
         result.predecessors = original_predecessors;
         result.source = original_source;
     }
-    
+
     /// Approximates the number of reachable vertices from a source using BFS with a limit
     fn approx_reachable<W, G>(&self, graph: &G, source: usize, limit: usize) -> usize
     where
@@ -140,22 +192,22 @@ impl FastSSSP {
         G: Graph<W>,
     {
         use std::collections::VecDeque;
-        
+
         let mut visited = vec![false; graph.vertex_count()];
         let mut queue = VecDeque::new();
         let mut count = 0;
-        
+
         visited[source] = true;
         queue.push_back(source);
         count += 1;
-        
+
         // Run BFS with a limit to approximate reachability
         while let Some(v) = queue.pop_front() {
             if count >= limit {
                 // We've reached our sampling limit, extrapolate
                 return (count * graph.vertex_count()) / limit;
             }
-            
+
             for (u, _) in graph.outgoing_edges(v) {
                 if !visited[u] {
                     visited[u] = true;
@@ -164,14 +216,20 @@ impl FastSSSP {
                 }
             }
         }
-        
+
         // If we've explored the entire component without hitting the limit
         count
     }
-    
+
     /// Quick estimation of reachable vertices with limited hop count and edge scan limit
     /// This is more efficient for large graphs with small reachable components
-    pub fn quick_reach_estimate<W, G>(&self, g: &G, s: usize, max_hops: usize, max_scan: usize) -> usize
+    pub fn quick_reach_estimate<W, G>(
+        &self,
+        g: &G,
+        s: usize,
+        max_hops: usize,
+        max_scan: usize,
+    ) -> usize
     where
         W: Float + Zero + Debug + Copy + Ord,
         G: Graph<W>,
@@ -179,26 +237,30 @@ impl FastSSSP {
         use std::collections::VecDeque;
         let mut q = VecDeque::new();
         let mut seen = vec![false; g.vertex_count()];
-        q.push_back((s, 0)); 
+        q.push_back((s, 0));
         seen[s] = true;
         let mut visited = 1;
         let mut scanned = 0;
 
         while let Some((u, d)) = q.pop_front() {
-            if d >= max_hops { continue; }
+            if d >= max_hops {
+                continue;
+            }
             for (v, _) in g.outgoing_edges(u) {
                 scanned += 1;
-                if scanned > max_scan { return visited; }
-                if !seen[v] { 
-                    seen[v] = true; 
-                    visited += 1; 
-                    q.push_back((v, d+1)); 
+                if scanned > max_scan {
+                    return visited;
+                }
+                if !seen[v] {
+                    seen[v] = true;
+                    visited += 1;
+                    q.push_back((v, d + 1));
                 }
             }
         }
         visited
     }
-    
+
     /// Estimate the maximum degree of vertices reachable from the source
     fn est_max_degree_reachable<W, G>(&self, g: &G, s: usize, max_scan: usize) -> usize
     where
@@ -208,7 +270,7 @@ impl FastSSSP {
         use std::collections::VecDeque;
         let mut q = VecDeque::new();
         let mut seen = vec![false; g.vertex_count()];
-        q.push_back(s); 
+        q.push_back(s);
         seen[s] = true;
         let mut scanned = 0;
         let mut max_degree = 0;
@@ -218,49 +280,56 @@ impl FastSSSP {
             let out_deg = g.outgoing_edges(u).count();
             let in_deg = g.incoming_edges(u).count();
             max_degree = max_degree.max(out_deg).max(in_deg);
-            
+
             // Scan neighbors
             for (v, _) in g.outgoing_edges(u) {
                 scanned += 1;
-                if scanned > max_scan { return max_degree; }
-                if !seen[v] { 
+                if scanned > max_scan {
+                    return max_degree;
+                }
+                if !seen[v] {
                     seen[v] = true;
-                    q.push_back(v); 
+                    q.push_back(v);
                 }
             }
         }
         max_degree
     }
-    
+
     /// Choose optimal k and t parameters based on reachable component size
-    fn choose_params(&self, reach_est: usize, avg_deg: f64) -> (usize, usize) {
+    fn choose_params(&self, reach_est: usize, _avg_deg: f64) -> (usize, usize) {
         // Base k on square root of reachable vertices
         let k = (reach_est as f64).sqrt().ceil() as usize;
         // t should be roughly 2*log2(k)
         let t = (2.0 * (k as f64).log2()).ceil() as usize;
-        
+
         // Apply reasonable bounds
-        let k_bounded = k.max(8).min(64);  
+        let k_bounded = k.max(8).min(64);
         let t_bounded = t.max(4).min(32);
-        
+
         (k_bounded, t_bounded)
     }
-    
+
     /// Checks for reachability issues and fixes them by running a Dijkstra sweep
-    fn check_reachability<W, G>(&self, graph: &G, source: usize, result: &mut ShortestPathResult<W>) -> Result<()>
+    fn check_reachability<W, G>(
+        &self,
+        graph: &G,
+        source: usize,
+        result: &mut ShortestPathResult<W>,
+    ) -> Result<()>
     where
         W: Float + Zero + Debug + Copy + Ord,
         G: Graph<W>,
     {
-        use std::collections::BinaryHeap;
         use std::cmp::Reverse;
-        
+        use std::collections::BinaryHeap;
+
         let n = graph.vertex_count();
-        
+
         // Convert Option<W> distances to W with max_value for None
         let mut working_distances = vec![W::max_value(); n];
         let mut working_predecessors = vec![None; n];
-        
+
         // Initialize with known distances
         for (i, dist) in result.distances.iter().enumerate() {
             if let Some(d) = dist {
@@ -268,29 +337,29 @@ impl FastSSSP {
                 working_predecessors[i] = result.predecessors[i];
             }
         }
-        
+
         // Set source distance to 0
         working_distances[source] = W::zero();
         working_predecessors[source] = Some(source);
-        
+
         // Run a Dijkstra-like algorithm to find unreachable vertices
         let mut queue = BinaryHeap::new();
         queue.push(Reverse((working_distances[source], source)));
-        
+
         let mut visited = vec![false; n];
-        
+
         while let Some(Reverse((dist_u, u))) = queue.pop() {
             // Skip if already visited
             if visited[u] {
                 continue;
             }
             visited[u] = true;
-            
+
             // Skip if we've found a better path
             if dist_u > working_distances[u] {
                 continue;
             }
-            
+
             // Relax outgoing edges
             for (v, weight) in graph.outgoing_edges(u) {
                 let new_dist = dist_u + weight;
@@ -301,7 +370,7 @@ impl FastSSSP {
                 }
             }
         }
-        
+
         // Update the result with fixed distances and predecessors
         for i in 0..n {
             if working_distances[i] < W::max_value() {
@@ -312,11 +381,11 @@ impl FastSSSP {
                 result.predecessors[i] = None;
             }
         }
-        
+
         // Apply Dijkstra's algorithm on the original graph
         let dijkstra = Dijkstra::new();
         let dijkstra_result = dijkstra.compute_shortest_paths(graph, source)?;
-        
+
         // For each vertex that was unreachable in our result but reachable in Dijkstra's result,
         // update our result with Dijkstra's findings
         for v in 0..graph.vertex_count() {
@@ -325,10 +394,10 @@ impl FastSSSP {
                 result.predecessors[v] = dijkstra_result.predecessors[v];
             }
         }
-        
+
         Ok(())
     }
-    
+
     /// Computes a path to a specific target vertex
     #[allow(dead_code)]
     fn compute_path_to_target<W, G>(
@@ -343,33 +412,33 @@ impl FastSSSP {
         W: Float + Zero + Debug + Copy + Ord,
         G: Graph<W>,
     {
-        use std::collections::BinaryHeap;
         use std::cmp::Reverse;
-        
+        use std::collections::BinaryHeap;
+
         // Initialize priority queue with source
         let mut queue = BinaryHeap::new();
         queue.push(Reverse((distances[source], source)));
-        
+
         // Track visited vertices to avoid cycles
         let mut visited = vec![false; graph.vertex_count()];
-        
+
         while let Some(Reverse((dist_u, u))) = queue.pop() {
             // If we've reached the target, we're done
             if u == target {
                 return true;
             }
-            
+
             // Skip if already visited
             if visited[u] {
                 continue;
             }
             visited[u] = true;
-            
+
             // Skip if we've found a better path
             if dist_u > distances[u] {
                 continue;
             }
-            
+
             // Relax outgoing edges
             for (v, weight) in graph.outgoing_edges(u) {
                 let new_dist = dist_u + weight;
@@ -380,7 +449,7 @@ impl FastSSSP {
                 }
             }
         }
-        
+
         // Target not reachable
         false
     }
@@ -428,44 +497,44 @@ where
     fn transform(&self, graph: &G) -> G {
         let n = graph.vertex_count();
         let mut transformed_graph = graph.clone();
-        
+
         // Create a new transformer with proper capacity
         let mut vertex_to_original = (0..n).collect::<Vec<_>>();
         let mut original_to_vertices = (0..n).map(|i| vec![i]).collect::<Vec<_>>();
-        
+
         // Process each vertex with high out-degree
         for v in 0..n {
             let out_edges: Vec<_> = graph.outgoing_edges(v).collect();
-            
+
             // If out-degree is already small enough, skip
             if out_edges.len() <= 3 {
                 continue;
             }
-            
+
             // Remove all existing outgoing edges
             for (u, _) in out_edges.iter() {
                 transformed_graph.remove_edge(v, *u);
             }
-            
+
             // Create a chain of vertices to handle the high out-degree
             let mut chain_vertices = vec![v];
             let chunks = out_edges.chunks(2); // Each vertex in chain handles at most 2 outgoing edges
-            
+
             // Create additional vertices for the chain (skip first chunk which is handled by v)
             for _ in 1..chunks.len() {
                 let new_v = transformed_graph.add_vertex();
                 chain_vertices.push(new_v);
-                
+
                 // Update mappings
                 vertex_to_original.push(v);
                 original_to_vertices[v].push(new_v);
             }
-            
+
             // Connect chain vertices with zero-weight edges
-            for i in 0..chain_vertices.len()-1 {
-                transformed_graph.add_edge(chain_vertices[i], chain_vertices[i+1], W::zero());
+            for i in 0..chain_vertices.len() - 1 {
+                transformed_graph.add_edge(chain_vertices[i], chain_vertices[i + 1], W::zero());
             }
-            
+
             // Distribute outgoing edges among chain vertices
             for (i, chunk) in chunks.enumerate() {
                 let chain_v = chain_vertices[i];
@@ -474,40 +543,40 @@ where
                 }
             }
         }
-        
+
         // Process each vertex with high in-degree
         for v in 0..n {
             let in_edges: Vec<_> = graph.incoming_edges(v).collect();
-            
+
             // If in-degree is already small enough, skip
             if in_edges.len() <= 3 {
                 continue;
             }
-            
+
             // Remove all existing incoming edges
             for (u, _) in in_edges.iter() {
                 transformed_graph.remove_edge(*u, v);
             }
-            
+
             // Create a tree of vertices to handle the high in-degree
             let mut tree_vertices = vec![v];
             let chunks = in_edges.chunks(2); // Each vertex in tree handles at most 2 incoming edges
-            
+
             // Create additional vertices for the tree (skip first chunk which is handled by v)
             for _ in 1..chunks.len() {
                 let new_v = transformed_graph.add_vertex();
                 tree_vertices.push(new_v);
-                
+
                 // Update mappings
                 vertex_to_original.push(v);
                 original_to_vertices[v].push(new_v);
             }
-            
+
             // Connect tree vertices with zero-weight edges
             for i in 1..tree_vertices.len() {
                 transformed_graph.add_edge(tree_vertices[i], v, W::zero());
             }
-            
+
             // Distribute incoming edges among tree vertices
             for (i, chunk) in chunks.enumerate() {
                 let tree_v = tree_vertices[i];
@@ -516,19 +585,19 @@ where
                 }
             }
         }
-        
+
         // Create a new transformer with the mappings
         // We can't modify self directly since it's behind a shared reference
         // Instead, we create a new transformer with the mappings and attach it to the graph
         let mut new_transformer = ConstantDegreeTransformer::<W, G>::new();
         new_transformer.vertex_to_original = vertex_to_original;
         new_transformer.original_to_vertices = original_to_vertices;
-        
+
         // We can't return the transformer directly, so we'll store it somewhere
         // For now, just return the transformed graph
         transformed_graph
     }
-    
+
     fn map_vertex_to_original(&self, transformed_vertex: usize) -> usize {
         if transformed_vertex < self.vertex_to_original.len() {
             self.vertex_to_original[transformed_vertex]
@@ -536,7 +605,7 @@ where
             transformed_vertex // Default to identity mapping if not found
         }
     }
-    
+
     fn map_vertex_from_original(&self, original_vertex: usize) -> Vec<usize> {
         if original_vertex < self.original_to_vertices.len() {
             self.original_to_vertices[original_vertex].clone()
@@ -558,26 +627,32 @@ impl FastSSSP {
         let dijkstra = Dijkstra::new();
         dijkstra.compute_shortest_paths(graph, source)
     }
-    
-    fn compute_dijkstra<W, G>(&self, graph: &G, source: usize, distances: &mut Vec<W>, predecessors: &mut Vec<Option<usize>>) -> Result<ShortestPathResult<W>>
+
+    fn compute_dijkstra<W, G>(
+        &self,
+        graph: &G,
+        source: usize,
+        distances: &mut Vec<W>,
+        predecessors: &mut Vec<Option<usize>>,
+    ) -> Result<ShortestPathResult<W>>
     where
         W: Float + Zero + Debug + Copy + Ord,
         G: Graph<W> + Clone,
     {
-        use std::collections::BinaryHeap;
         use std::cmp::Reverse;
-        
+        use std::collections::BinaryHeap;
+
         // Initialize priority queue
         let mut queue = BinaryHeap::new();
         queue.push(Reverse((distances[source], source)));
-        
+
         // Run Dijkstra's algorithm
         while let Some(Reverse((dist_u, u))) = queue.pop() {
             // Skip if we've found a better path
             if dist_u > distances[u] {
                 continue;
             }
-            
+
             // Relax outgoing edges
             for (v, weight) in graph.outgoing_edges(u) {
                 let new_dist = dist_u + weight;
@@ -588,18 +663,39 @@ impl FastSSSP {
                 }
             }
         }
-        
+
         // Convert to ShortestPathResult format
         let final_distances: Vec<Option<W>> = distances
             .iter()
             .map(|&d| if d == W::max_value() { None } else { Some(d) })
             .collect();
-        
+
         Ok(ShortestPathResult {
             distances: final_distances,
             predecessors: predecessors.clone(),
             source,
         })
+    }
+
+    #[cfg(test)]
+    fn record_bmssp_plan(&self, plan: BmsspExecutionPlan) {
+        BMSSP_CALL_COUNT.fetch_add(1, Ordering::SeqCst);
+        if let Ok(mut slot) = LAST_PLAN.lock() {
+            *slot = Some(plan);
+        }
+    }
+
+    #[cfg(test)]
+    fn take_last_plan(&self) -> Option<BmsspExecutionPlan> {
+        LAST_PLAN.lock().ok().and_then(|mut slot| slot.take())
+    }
+
+    #[cfg(test)]
+    fn reset_bmssp_tracking(&self) {
+        BMSSP_CALL_COUNT.store(0, Ordering::SeqCst);
+        if let Ok(mut slot) = LAST_PLAN.lock() {
+            *slot = None;
+        }
     }
 }
 
@@ -612,12 +708,12 @@ where
     fn name(&self) -> &'static str {
         "Fast SSSP (O(m log^(2/3) n)) or Dijkstra"
     }
-    
+
     fn compute_shortest_paths(&self, graph: &G, source: usize) -> Result<ShortestPathResult<W>> {
         if !graph.has_vertex(source) {
             return Err(Error::SourceNotFound);
         }
-        
+
         // Check for negative weights
         for v in 0..graph.vertex_count() {
             for (_, weight) in graph.outgoing_edges(v) {
@@ -626,98 +722,124 @@ where
                 }
             }
         }
-        
+
         let n = graph.vertex_count();
-        println!("Computing shortest paths for graph with {} vertices from source {}", n, source);
-        
+        println!(
+            "Computing shortest paths for graph with {} vertices from source {}",
+            n, source
+        );
+
         // Apply graph transformation based on the degree mode
         let (working_graph, transformed_to_original, working_source) = match self.degree_mode {
             DegreeMode::ForceConst => {
                 println!("Converting graph to constant-degree representation (classic approach)");
                 // Clone the graph first since we need to call a method on the owned value
                 let graph_owned = graph.clone();
-                let (transformed_graph, original_to_transformed, transformed_to_original) = graph_owned.to_constant_degree();
-                
+                let (transformed_graph, original_to_transformed, transformed_to_original) =
+                    graph_owned.to_constant_degree();
+
                 // Determine the source vertex in the working graph
                 let working_source = original_to_transformed[source][0];
-                
+
                 (transformed_graph, transformed_to_original, working_source)
-            },
+            }
             DegreeMode::Auto { delta } => {
                 // Sample a small percentage of vertices to see if transformation is needed
                 let sample_size = (n as f64 * 0.01).ceil() as usize;
                 let mut max_degree = 0;
-                
+
                 for i in 0..sample_size {
                     let v = (i * n / sample_size).min(n - 1);
                     let out_deg = graph.outgoing_edges(v).count();
                     let in_deg = graph.incoming_edges(v).count();
                     max_degree = max_degree.max(out_deg).max(in_deg);
                 }
-                
+
                 if max_degree <= delta {
-                    println!("Sampled max degree {} <= delta {}, skipping transformation", max_degree, delta);
+                    println!(
+                        "Sampled max degree {} <= delta {}, skipping transformation",
+                        max_degree, delta
+                    );
                     (graph.clone(), Vec::new(), source)
                 } else {
-                    println!("Sampled max degree {} > delta {}, applying hub-split transformation", max_degree, delta);
+                    println!(
+                        "Sampled max degree {} > delta {}, applying hub-split transformation",
+                        max_degree, delta
+                    );
                     let hub_split = HubSplit::new(graph.clone(), delta);
                     hub_split.transform(graph);
-                    
+
                     // Extract the transformed graph and mappings
                     let transformed_to_original = hub_split.vertex_to_original.clone();
                     let original_to_vertices = hub_split.original_to_vertices.clone();
-                    
+
                     // Determine the source vertex in the working graph
                     let working_source = original_to_vertices[source][0];
-                    
+
                     (hub_split.graph, transformed_to_original, working_source)
                 }
-            },
+            }
             DegreeMode::None => {
                 println!("Using original graph without transformation");
                 (graph.clone(), Vec::new(), source)
             }
         };
-        
-        // Check if the reachable component is very small
+
+        let working_vertex_count = working_graph.vertex_count();
         let reach = self.approx_reachable(&working_graph, working_source, 256);
-        if self.small_reach_fraction > 0.0 {
-            let threshold = (self.small_reach_fraction * n as f64) as usize;
-            if reach < threshold {
-                println!("Reachable component is small ({} < {}), using Dijkstra algorithm", reach, threshold);
+        let planning_vertices = reach.max(working_vertex_count);
+        let reachability_threshold = if self.small_reach_fraction > 0.0 {
+            (self.small_reach_fraction * planning_vertices as f64).ceil() as usize
+        } else {
+            0
+        };
+
+        if self.small_reach_fraction > 0.0 && reach < reachability_threshold {
+            println!(
+                "Reachable component is small ({} < {}), using Dijkstra algorithm",
+                reach, reachability_threshold
+            );
+            return self.run_dijkstra(graph, source);
+        }
+
+        // Choose algorithm based on graph size
+        if planning_vertices >= self.vertex_threshold {
+            println!(
+                "Graph is large (planning vertices={} >= {}), using FastSSSP algorithm",
+                planning_vertices, self.vertex_threshold
+            );
+
+            let (k, t, level) = Self::bmssp_parameters(planning_vertices);
+
+            println!("Running BMSSP with parameters k={}, t={}", k, t);
+
+            #[cfg(test)]
+            self.record_bmssp_plan(BmsspExecutionPlan {
+                working_vertices: working_vertex_count,
+                reach_estimate: reach,
+                planning_vertices,
+                reachability_threshold,
+                k,
+                t,
+                level,
+            });
+
+            #[cfg(test)]
+            if self.plan_only {
                 return self.run_dijkstra(graph, source);
             }
-        }
-        
-        // Choose algorithm based on graph size
-        if n >= self.vertex_threshold {
-            println!("Graph is large (n={} >= {}), using FastSSSP algorithm", n, self.vertex_threshold);
-            
-            // Calculate parameters for BMSSP based on the graph size per paper
-            let ln = (n as f64).ln();
-            let k = ln.powf(1.0 / 3.0).ceil() as usize;
-            let t = ln.powf(2.0 / 3.0).ceil() as usize;
-            
-            // Level determines the depth of the BMSSP recursion.  It is the
-            // ceiling of ln(n) divided by t as suggested in the paper.
-            let mut level = ((n as f64).ln() / (t as f64)).ceil() as usize;
-            if level < 1 {
-                level = 1;
-            }
-            
-            println!("Running BMSSP with parameters k={}, t={}", k, t);
-            
+
             // Run BMSSP on the graph
             let bmssp = BMSSP::new_with_params(working_graph.vertex_count(), k, t);
-            
+
             // Prepare data structures
             let mut distances = vec![W::max_value(); working_graph.vertex_count()];
             let mut predecessors = vec![None; working_graph.vertex_count()];
-            
+
             // Set source distance
             distances[working_source] = W::zero();
             predecessors[working_source] = Some(working_source);
-            
+
             // Execute BMSSP starting from the computed top level
             let _bmssp_result = bmssp.execute(
                 &working_graph,
@@ -725,7 +847,7 @@ where
                 W::max_value(),
                 &[working_source],
                 &mut distances,
-                &mut predecessors
+                &mut predecessors,
             )?;
 
             // Convert BMSSP result to ShortestPathResult, mapping back to original vertices if needed
@@ -751,9 +873,10 @@ where
                 // Map predecessors back
                 for (transformed_v, pred_opt) in predecessors.iter().enumerate() {
                     if let Some(pred) = pred_opt {
-                        if distances[transformed_v] < W::max_value() && 
-                           transformed_v < transformed_to_original.len() && 
-                           *pred < transformed_to_original.len() {
+                        if distances[transformed_v] < W::max_value()
+                            && transformed_v < transformed_to_original.len()
+                            && *pred < transformed_to_original.len()
+                        {
                             let orig_v = transformed_to_original[transformed_v];
                             let orig_pred = transformed_to_original[*pred];
 
@@ -768,9 +891,10 @@ where
                 // Create result with mapped values
                 let mut result = ShortestPathResult {
                     source,
-                    distances: orig_distances.into_iter().map(|d| {
-                        if d == W::max_value() { None } else { Some(d) }
-                    }).collect(),
+                    distances: orig_distances
+                        .into_iter()
+                        .map(|d| if d == W::max_value() { None } else { Some(d) })
+                        .collect(),
                     predecessors: orig_predecessors,
                 };
 
@@ -778,38 +902,43 @@ where
                 if self.enable_reachability_sweep {
                     self.check_reachability(graph, source, &mut result)?;
                 }
-                
+
                 Ok(result)
             } else {
                 // No transformation, use results directly
                 let mut result = ShortestPathResult {
                     source,
-                    distances: distances.into_iter().map(|d| {
-                        if d == W::max_value() { None } else { Some(d) }
-                    }).collect(),
+                    distances: distances
+                        .into_iter()
+                        .map(|d| if d == W::max_value() { None } else { Some(d) })
+                        .collect(),
                     predecessors,
                 };
-                
+
                 // Optionally check and fix reachability issues with a Dijkstra sweep
                 if self.enable_reachability_sweep {
                     let _ = self.check_reachability::<W, G>(&working_graph, source, &mut result);
                 }
-                
+
                 Ok(result)
             }
         } else {
-            println!("Graph is small (n={} < {}), using Dijkstra algorithm", n, self.vertex_threshold);
-            
+            println!(
+                "Graph is small (n={} < {}), using Dijkstra algorithm",
+                n, self.vertex_threshold
+            );
+
             // Use Dijkstra for small graphs (n < vertex_threshold)
             let dijkstra = Dijkstra::new();
             let result = if !transformed_to_original.is_empty() {
                 // When using a transformed graph with Dijkstra, we need to transform the result back
-                let transformed_result = dijkstra.compute_shortest_paths(&working_graph, working_source)?;
-                
+                let transformed_result =
+                    dijkstra.compute_shortest_paths(&working_graph, working_source)?;
+
                 // Map the result back to the original graph
                 let mut orig_distances = vec![W::max_value(); n];
                 let mut orig_predecessors = vec![None; n];
-                
+
                 // Map distances
                 for (transformed_v, dist_opt) in transformed_result.distances.iter().enumerate() {
                     if let Some(dist) = dist_opt {
@@ -819,24 +948,28 @@ where
                         }
                     }
                 }
-                
+
                 // Map predecessors
-                for (transformed_v, pred_opt) in transformed_result.predecessors.iter().enumerate() {
+                for (transformed_v, pred_opt) in transformed_result.predecessors.iter().enumerate()
+                {
                     if let Some(transformed_pred) = pred_opt {
                         let orig_v = transformed_to_original[transformed_v];
                         let orig_pred = transformed_to_original[*transformed_pred];
-                        
+
                         // Set predecessor if we have a valid distance for this vertex AND the edge exists in the original graph
-                        if orig_distances[orig_v] < W::max_value() && graph.has_edge(orig_pred, orig_v) {
+                        if orig_distances[orig_v] < W::max_value()
+                            && graph.has_edge(orig_pred, orig_v)
+                        {
                             orig_predecessors[orig_v] = Some(orig_pred);
                         }
                     }
                 }
-                
+
                 ShortestPathResult {
-                    distances: orig_distances.into_iter().map(|d| {
-                        if d == W::max_value() { None } else { Some(d) }
-                    }).collect(),
+                    distances: orig_distances
+                        .into_iter()
+                        .map(|d| if d == W::max_value() { None } else { Some(d) })
+                        .collect(),
                     predecessors: orig_predecessors,
                     source,
                 }
@@ -844,8 +977,97 @@ where
                 // Using original graph with Dijkstra
                 dijkstra.compute_shortest_paths(&working_graph, source)?
             };
-            
+
             Ok(result)
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::graph::DirectedGraph;
+    use ordered_float::OrderedFloat;
+    use std::sync::atomic::Ordering;
+    use std::sync::Mutex;
+
+    static TEST_MUTEX: Mutex<()> = Mutex::new(());
+
+    fn make_chain_graph(len: usize) -> DirectedGraph<OrderedFloat<f64>> {
+        let mut graph = DirectedGraph::new();
+        for _ in 0..len {
+            graph.add_vertex();
+        }
+
+        for i in 0..len - 1 {
+            graph.add_edge(i, i + 1, OrderedFloat(1.0));
+        }
+
+        graph
+    }
+
+    #[test]
+    fn bmssp_uses_working_vertex_count_for_parameters() {
+        let _guard = TEST_MUTEX.lock().unwrap();
+
+        let graph = make_chain_graph(20);
+        let fast = FastSSSP::new()
+            .with_vertex_threshold(10)
+            .with_small_reach_fraction(0.0)
+            .with_plan_only(true);
+
+        fast.reset_bmssp_tracking();
+
+        let result = fast
+            .compute_shortest_paths(&graph, 0)
+            .expect("BMSSP should succeed");
+        assert!(result.distances.iter().any(|d| d.is_some()));
+
+        assert_eq!(BMSSP_CALL_COUNT.load(Ordering::SeqCst), 1);
+
+        let plan = fast.take_last_plan().expect("BMSSP should have executed");
+        assert_eq!(plan.working_vertices, graph.vertex_count());
+        assert!(plan.planning_vertices >= plan.working_vertices);
+
+        let expected = FastSSSP::bmssp_parameters(plan.planning_vertices);
+        assert_eq!((plan.k, plan.t, plan.level), expected);
+    }
+
+    #[test]
+    fn bmssp_triggers_after_transformation_growth() {
+        let _guard = TEST_MUTEX.lock().unwrap();
+
+        let mut graph = DirectedGraph::new();
+        for _ in 0..8 {
+            graph.add_vertex();
+        }
+
+        for target in 1..8 {
+            graph.add_edge(0, target, OrderedFloat(1.0));
+        }
+
+        let fast = FastSSSP::new()
+            .with_degree_mode(DegreeMode::ForceConst)
+            .with_vertex_threshold(9)
+            .with_small_reach_fraction(0.0)
+            .with_plan_only(true);
+
+        fast.reset_bmssp_tracking();
+
+        let result = fast
+            .compute_shortest_paths(&graph, 0)
+            .expect("BMSSP should succeed");
+        assert!(result.distances.iter().any(|d| d.is_some()));
+
+        assert_eq!(BMSSP_CALL_COUNT.load(Ordering::SeqCst), 1);
+
+        let plan = fast
+            .take_last_plan()
+            .expect("BMSSP should have executed on transformed graph");
+        assert!(plan.working_vertices > graph.vertex_count());
+        assert!(plan.planning_vertices >= plan.working_vertices);
+
+        let expected = FastSSSP::bmssp_parameters(plan.planning_vertices);
+        assert_eq!((plan.k, plan.t, plan.level), expected);
     }
 }

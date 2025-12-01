@@ -1,0 +1,27 @@
+Benchmark,Graph Type,Vertices,Edges,Algorithm,Time,Reachable,Notes
+Scientific,Scale-free,10000,29997,Dijkstra,0.30ms,N/A,Baseline
+Scientific,Scale-free,10000,29997,FastSSSP,4.46ms,N/A,Correct
+Scientific,Scale-free,50000,149997,Dijkstra,0.61ms,N/A,Baseline
+Scientific,Scale-free,50000,149997,FastSSSP,96.82ms,N/A,Incorrect
+Scientific,Scale-free,100000,299997,Dijkstra,0.53ms,N/A,Baseline
+Scientific,Scale-free,100000,299997,FastSSSP,231.97ms,N/A,Correct
+Scientific,3D Grid,27000,156600,Dijkstra,13.92ms,N/A,Baseline
+Scientific,3D Grid,27000,156600,FastSSSP,18.79ms,N/A,Incorrect
+Scientific,3D Grid,64000,374400,Dijkstra,31.01ms,N/A,Baseline
+Scientific,3D Grid,64000,374400,FastSSSP,46.92ms,N/A,Incorrect
+Scientific,3D Geometric,10000,369938,Dijkstra,8.99ms,N/A,Baseline
+Scientific,3D Geometric,10000,369938,FastSSSP,14.75ms,N/A,Incorrect
+Scientific,3D Geometric,50000,9345172,Dijkstra,126.35ms,N/A,Baseline
+Scientific,3D Geometric,50000,9345172,FastSSSP,1250ms,N/A,Incorrect
+Scientific,3D Geometric,100000,37377486,Dijkstra,486.91ms,N/A,Baseline
+Scientific,3D Geometric,100000,37377486,FastSSSP,50300ms,N/A,Incorrect
+LargeGraph,Sparse,10000,50000,Dijkstra,5.22ms,9951,Baseline
+LargeGraph,Sparse,10000,50000,FastSSSP,5.74ms,754,Incorrect (30% match)
+LargeGraph,Sparse,50000,200000,Dijkstra,42.72ms,48988,Baseline
+LargeGraph,Sparse,50000,200000,FastSSSP,39.59ms,426,Incorrect (60% match)
+LargeGraph,Sparse,100000,400000,Dijkstra,105.73ms,98035,Baseline
+LargeGraph,Sparse,100000,400000,FastSSSP,89.06ms,544,Incorrect (50% match)
+LargeGraph,Grid 100x100,10000,39600,Dijkstra,1.92ms,10000,Baseline
+LargeGraph,Grid 100x100,10000,39600,FastSSSP,2.91ms,25,Incorrect (0% match)
+HubHeavy,HubHeavy,1000000,4000000,Dijkstra,2005ms,980516,Baseline
+HubHeavy,HubHeavy,1000000,4000000,FastSSSP,1271ms,46,Incorrect

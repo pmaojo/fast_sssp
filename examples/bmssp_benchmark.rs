@@ -1,14 +1,14 @@
-use std::time::Instant;
 use colored::*;
 use ordered_float::OrderedFloat;
 use rand::Rng;
+use std::time::Instant;
 
-use fast_sssp::algorithm::dijkstra::Dijkstra;
-use fast_sssp::algorithm::fast_sssp::{FastSSSP, DegreeMode};
 use fast_sssp::algorithm::bmssp::BMSSP;
+use fast_sssp::algorithm::dijkstra::Dijkstra;
+use fast_sssp::algorithm::fast_sssp::{DegreeMode, FastSSSP};
 use fast_sssp::algorithm::traits::ShortestPathAlgorithm;
+use fast_sssp::graph::generators::generate_3d_grid;
 use fast_sssp::graph::DirectedGraph;
-use fast_sssp::graph::generators::{generate_barabasi_albert, generate_3d_grid, generate_geometric_3d};
 use fast_sssp::graph::Graph;
 
 fn main() {
@@ -20,7 +20,12 @@ fn main() {
     let start = Instant::now();
     let graph = generate_3d_grid(nx, ny, nz);
     let gen_time = start.elapsed();
-    println!("Generated graph with {} vertices and {} edges in {:.2?}", graph.vertex_count(), graph.edge_count(), gen_time);
+    println!(
+        "Generated graph with {} vertices and {} edges in {:.2?}",
+        graph.vertex_count(),
+        graph.edge_count(),
+        gen_time
+    );
 
     // Pick random source
     let mut rng = rand::thread_rng();
@@ -32,7 +37,11 @@ fn main() {
 
     for (k, t) in params {
         println!("\nTesting BMSSP with k={}, t={}", k, t);
-        let bmssp = BMSSP::<OrderedFloat<f64>, DirectedGraph<OrderedFloat<f64>>>::new_with_params(graph.vertex_count(), k, t);
+        let bmssp = BMSSP::<OrderedFloat<f64>, DirectedGraph<OrderedFloat<f64>>>::new_with_params(
+            graph.vertex_count(),
+            k,
+            t,
+        );
 
         // Prepare containers
         let mut distances = vec![OrderedFloat(f64::INFINITY); graph.vertex_count()];
@@ -55,8 +64,19 @@ fn main() {
         // Execute BMSSP base case for demonstration
         let bound = OrderedFloat(1000.0);
         let sources = vec![source];
-        match bmssp.execute(&graph, 0, bound, &sources, &mut distances, &mut predecessors) {
-            Ok(res) => println!("BMSSP base case: new_bound={:.2}, vertices={}", res.new_bound.0, res.vertices.len()),
+        match bmssp.execute(
+            &graph,
+            0,
+            bound,
+            &sources,
+            &mut distances,
+            &mut predecessors,
+        ) {
+            Ok(res) => println!(
+                "BMSSP base case: new_bound={:.2}, vertices={}",
+                res.new_bound.0,
+                res.vertices.len()
+            ),
             Err(e) => println!("BMSSP error: {:?}", e),
         }
 
@@ -65,12 +85,17 @@ fn main() {
         for i in 0..graph.vertex_count().min(1000) {
             let d_fast = fast_result.distances[i].map(|x| x.0);
             let d_dij = dijkstra_result.distances[i].map(|x| x.0);
-            if d_fast != d_dij { mismatches += 1; }
+            if d_fast != d_dij {
+                mismatches += 1;
+            }
         }
         if mismatches == 0 {
             println!("✓ FastSSSP matches Dijkstra on sampled vertices");
         } else {
-            println!("⚠️  {} mismatches between FastSSSP and Dijkstra on sample", mismatches);
+            println!(
+                "⚠️  {} mismatches between FastSSSP and Dijkstra on sample",
+                mismatches
+            );
         }
     }
 }

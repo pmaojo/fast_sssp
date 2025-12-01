@@ -1,18 +1,23 @@
-use std::time::Instant;
 use colored::*;
-use rand::Rng;
 use ordered_float::OrderedFloat;
+use rand::Rng;
+use std::time::Instant;
 
 use fast_sssp::algorithm::dijkstra::Dijkstra;
-use fast_sssp::algorithm::fast_sssp::{FastSSSP, DegreeMode};
-use fast_sssp::algorithm::smart_sssp::{SmartSSSP, SmartMode};
+use fast_sssp::algorithm::fast_sssp::{DegreeMode, FastSSSP};
+use fast_sssp::algorithm::smart_sssp::{SmartMode, SmartSSSP};
 use fast_sssp::algorithm::traits::ShortestPathAlgorithm;
+use fast_sssp::graph::generators::{
+    generate_3d_grid, generate_barabasi_albert, generate_geometric_3d,
+};
 use fast_sssp::graph::DirectedGraph;
-use fast_sssp::graph::generators::{generate_barabasi_albert, generate_3d_grid, generate_geometric_3d};
 use fast_sssp::graph::Graph;
 
 fn main() {
-    println!("{}", "Scientific Benchmark for SSSP Algorithms".green().bold());
+    println!(
+        "{}",
+        "Scientific Benchmark for SSSP Algorithms".green().bold()
+    );
 
     // Test sizes for graphs
     let sizes = [10_000, 50_000, 100_000];
@@ -23,29 +28,55 @@ fn main() {
         let start = Instant::now();
         let graph = generate_barabasi_albert(size, 3);
         let gen_time = start.elapsed();
-        println!("Generated scale-free graph: {} vertices, {} edges in {:.2?}", graph.vertex_count(), graph.edge_count(), gen_time);
+        println!(
+            "Generated scale-free graph: {} vertices, {} edges in {:.2?}",
+            graph.vertex_count(),
+            graph.edge_count(),
+            gen_time
+        );
 
         run_algorithms_on_graph(&graph);
     }
 
     // Test 2: 3D grid graphs
     for &(nx, ny, nz) in &[(30, 30, 30), (40, 40, 40)] {
-        println!("\n{} {}x{}x{}", "Testing 3D grid graph".yellow(), nx, ny, nz);
+        println!(
+            "\n{} {}x{}x{}",
+            "Testing 3D grid graph".yellow(),
+            nx,
+            ny,
+            nz
+        );
         let start = Instant::now();
         let graph = generate_3d_grid(nx, ny, nz);
         let gen_time = start.elapsed();
-        println!("Generated 3D grid graph: {} vertices, {} edges in {:.2?}", graph.vertex_count(), graph.edge_count(), gen_time);
+        println!(
+            "Generated 3D grid graph: {} vertices, {} edges in {:.2?}",
+            graph.vertex_count(),
+            graph.edge_count(),
+            gen_time
+        );
 
         run_algorithms_on_graph(&graph);
     }
 
     // Test 3: 3D geometric graphs
     for &size in &sizes {
-        println!("\n{} {} {}", "Testing 3D geometric graph of size".yellow(), size, "with radius 0.1");
+        println!(
+            "\n{} {} {}",
+            "Testing 3D geometric graph of size".yellow(),
+            size,
+            "with radius 0.1"
+        );
         let start = Instant::now();
         let graph = generate_geometric_3d(size, 0.1);
         let gen_time = start.elapsed();
-        println!("Generated 3D geometric graph: {} vertices, {} edges in {:.2?}", graph.vertex_count(), graph.edge_count(), gen_time);
+        println!(
+            "Generated 3D geometric graph: {} vertices, {} edges in {:.2?}",
+            graph.vertex_count(),
+            graph.edge_count(),
+            gen_time
+        );
 
         run_algorithms_on_graph(&graph);
     }
@@ -72,7 +103,7 @@ fn run_algorithms_on_graph(graph: &DirectedGraph<OrderedFloat<f64>>) {
     println!("FastSSSP time: {:.2?}", fast_time);
 
     // SmartSSSP in Auto mode
-    let mut smart_sssp = SmartSSSP::with_mode(SmartMode::Auto);
+    let smart_sssp = SmartSSSP::with_mode(SmartMode::Auto);
     let start = Instant::now();
     let smart_result = smart_sssp.compute_shortest_paths(graph, source).unwrap();
     let smart_time = start.elapsed();

@@ -94,6 +94,15 @@ where
         // Update key-value mapping
         self.key_values.insert(key, value);
         
+        // Ensure d1_blocks is not empty
+        if self.d1_blocks.is_empty() {
+            self.d1_blocks.push(Block {
+                pairs: Vec::new(),
+                upper_bound: self.upper_bound,
+            });
+            self.rebuild_upper_bounds();
+        }
+
         // Insert into D1 blocks
         let block_idx = self.find_block_for_value(value);
         self.d1_blocks[block_idx].pairs.push((key, value));
@@ -142,7 +151,8 @@ where
             // Single block case
             if !pairs_vec.is_empty() {
                 let max_value = pairs_vec.iter().map(|(_, v)| *v).fold(V::zero(), |a, b| if a > b { a } else { b });
-                self.d0_blocks.push(Block {
+                // Prepend to D0 blocks (insert at beginning)
+                self.d0_blocks.insert(0, Block {
                     pairs: pairs_vec,
                     upper_bound: max_value,
                 });
@@ -274,7 +284,7 @@ where
         pairs.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
         
         // Create blocks of approximately half the maximum size
-        let target_size = self.block_size / 2;
+        let target_size = (self.block_size / 2).max(1);
         let mut blocks = Vec::new();
         
         for chunk in pairs.chunks(target_size) {

@@ -72,8 +72,6 @@ where
         let k = k.max(2);
         let t = t.max(2);
 
-        println!("Creating BMSSP with parameters: k={}, t={}", k, t);
-
         BMSSP {
             k,
             t,
@@ -160,15 +158,21 @@ where
                 for (v, weight) in graph.outgoing_edges(u) {
                     let potential_dist = distances[u] + weight;
 
-                    if potential_dist < distances[v] {
-                        distances[v] = potential_dist;
-                        predecessors[v] = Some(u);
+                    // Relax edge if shorter path found OR equal path found (re-discovery)
+                    if potential_dist <= distances[v] {
+                        if potential_dist < distances[v] {
+                            distances[v] = potential_dist;
+                            predecessors[v] = Some(u);
+                        }
 
-                        // Add to appropriate set based on distance
-                        if potential_dist >= bi && potential_dist < bound {
-                            block_list.insert(v, potential_dist);
-                        } else if potential_dist >= new_bound && potential_dist < bi {
-                            batch_prepend_set.push((v, potential_dist));
+                        // Only add to block list if not already processed in this level
+                        if !result_vertices.contains(&v) {
+                            // Add to appropriate set based on distance
+                            if potential_dist >= bi && potential_dist < bound {
+                                block_list.insert(v, potential_dist);
+                            } else if potential_dist >= new_bound && potential_dist < bi {
+                                batch_prepend_set.push((v, potential_dist));
+                            }
                         }
                     }
                 }
@@ -230,12 +234,6 @@ where
     where
         W: Ord, // Add explicit Ord trait bound here
     {
-        println!(
-            "BMSSP base_case called with {} sources and bound {:?}",
-            sources.len(),
-            bound
-        );
-
         // Early termination for empty sources
         if sources.is_empty() {
             return Ok(BMSSPResult {
@@ -272,6 +270,7 @@ where
         // Run bounded Dijkstra's algorithm
         while let Some(std::cmp::Reverse((dist_u, u))) = heap.pop() {
             // Skip if we've already found a better path or reached the bound
+            // Note: We check strict inequality for distances[u] to allow re-processing equal distances
             if dist_u > distances[u] || dist_u > bound {
                 continue;
             }
@@ -356,10 +355,12 @@ where
         for &(v, weight) in edge_batch {
             let new_dist = dist_u + weight;
 
-            // Only update if the new distance is better and within the bound
-            if new_dist <= bound && new_dist < distances[v] {
-                distances[v] = new_dist;
-                predecessors[v] = Some(u);
+            // Only update if the new distance is better (or equal) and within the bound
+            if new_dist <= bound && new_dist <= distances[v] {
+                if new_dist < distances[v] {
+                    distances[v] = new_dist;
+                    predecessors[v] = Some(u);
+                }
                 heap.push(std::cmp::Reverse((new_dist, v)));
 
                 // Add to result vertices if not already visited
@@ -428,9 +429,11 @@ where
             for (v, weight) in graph.outgoing_edges(u) {
                 let new_dist = dist_u + weight;
 
-                if new_dist <= bound && new_dist < distances[v] {
-                    distances[v] = new_dist;
-                    predecessors[v] = Some(u);
+                if new_dist <= bound && new_dist <= distances[v] {
+                    if new_dist < distances[v] {
+                        distances[v] = new_dist;
+                        predecessors[v] = Some(u);
+                    }
                     heap.push(std::cmp::Reverse((new_dist, v)));
 
                     if !visited[v] {
@@ -469,12 +472,6 @@ where
         W: Ord, // Add explicit Ord trait bound here
     {
         use std::collections::VecDeque;
-
-        println!(
-            "Finding pivots from {} sources with bound {:?}",
-            sources.len(),
-            bound
-        );
 
         // Initialize work set with sources
         let mut work_set = sources.to_vec();
@@ -521,11 +518,8 @@ where
             steps += 1;
         }
 
-        println!("Work set size after {} steps: {}", steps, work_set.len());
-
         // If work_set is small, return all sources as pivots
         if work_set.len() <= self.k * sources.len() {
-            println!("Work set is small, using all sources as pivots");
             return Ok((sources.to_vec(), work_set));
         }
 
@@ -585,18 +579,8 @@ where
                 .unwrap();
 
             pivots.push(best_source);
-            println!(
-                "No large trees found, using source {} with tree size {}",
-                best_source,
-                tree_sizes.get(&best_source).unwrap_or(&0)
-            );
         }
 
-        println!(
-            "Found {} pivots from {} sources",
-            pivots.len(),
-            sources.len()
-        );
         Ok((pivots, work_set))
     }
 }

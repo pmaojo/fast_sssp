@@ -63,13 +63,14 @@ pub struct FastSSSP {
 
 impl FastSSSP {
     fn bmssp_parameters(planning_vertices: usize) -> (usize, usize, usize) {
-        let ln = (planning_vertices as f64).ln();
-        let k = ln.powf(1.0 / 3.0).ceil().max(1.0) as usize;
-        let t = ln.powf(2.0 / 3.0).ceil().max(1.0) as usize;
+        // Use log2 as the base for parameters
+        let log_n = (planning_vertices as f64).log2();
+        let k = log_n.powf(1.0 / 3.0).ceil().max(1.0) as usize;
+        let t = log_n.powf(2.0 / 3.0).ceil().max(1.0) as usize;
 
         // Level determines the depth of the BMSSP recursion. It is the
-        // ceiling of ln(n) divided by t as suggested in the paper.
-        let mut level = ((planning_vertices as f64).ln() / (t as f64)).ceil() as usize;
+        // ceiling of log n divided by t as suggested in the paper.
+        let mut level = (log_n / (t as f64)).ceil() as usize;
         if level < 1 {
             level = 1;
         }

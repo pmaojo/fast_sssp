@@ -3,7 +3,8 @@ use ordered_float::OrderedFloat;
 
 #[test]
 fn test_block_list_insert_and_pull() {
-    let mut bl: BlockList<usize, OrderedFloat<f64>> = BlockList::new(2, OrderedFloat(f64::INFINITY));
+    let mut bl: BlockList<usize, OrderedFloat<f64>> =
+        BlockList::new(2, OrderedFloat(f64::INFINITY));
     bl.insert(1, OrderedFloat(10.0));
     bl.insert(2, OrderedFloat(5.0));
     // update with smaller value
@@ -20,7 +21,8 @@ fn test_block_list_insert_and_pull() {
 
 #[test]
 fn test_block_list_batch_prepend() {
-    let mut bl: BlockList<usize, OrderedFloat<f64>> = BlockList::new(2, OrderedFloat(f64::INFINITY));
+    let mut bl: BlockList<usize, OrderedFloat<f64>> =
+        BlockList::new(2, OrderedFloat(f64::INFINITY));
     bl.insert(1, OrderedFloat(10.0));
     bl.insert(2, OrderedFloat(20.0));
 

@@ -11,15 +11,15 @@ use std::sync::{Arc, Mutex};
 use std::time::Instant;
 use uuid::Uuid;
 
-use crate::algorithm::{ShortestPathAlgorithm, ShortestPathResult};
-use crate::algorithm::dijkstra::Dijkstra;
-use crate::algorithm::fast_sssp::{FastSSSP, DegreeMode};
-use crate::algorithm::bmssp::BMSSP;
-use crate::algorithm::smart_sssp::SmartSSSP;
-use crate::graph::directed::DirectedGraph;
-use crate::graph::generators::{generate_barabasi_albert, generate_3d_grid, generate_geometric_3d};
-use crate::graph::traits::{Graph, MutableGraph};
-use crate::web::models::*;
+use fast_sssp::algorithm::{ShortestPathAlgorithm, ShortestPathResult};
+use fast_sssp::algorithm::dijkstra::Dijkstra;
+use fast_sssp::algorithm::fast_sssp::{FastSSSP, DegreeMode};
+use fast_sssp::algorithm::bmssp::BMSSP;
+use fast_sssp::algorithm::smart_sssp::SmartSSSP;
+use fast_sssp::graph::directed::DirectedGraph;
+use fast_sssp::graph::generators::{generate_barabasi_albert, generate_3d_grid, generate_geometric_3d};
+use fast_sssp::graph::traits::{Graph, MutableGraph};
+use super::models::*;
 
 /// Shared application state
 #[derive(Clone)]

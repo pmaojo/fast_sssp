@@ -9,7 +9,7 @@ use tower_http::{
     services::ServeDir,
 };
 
-use crate::web::api::{create_router, AppState};
+use super::api::{create_router, AppState};
 
 /// Start the web server
 pub async fn start_server(port: u16) -> Result<(), Box<dyn std::error::Error>> {

@@ -1,5 +1,5 @@
 use num_traits::{Float, Zero};
-use std::collections::{BinaryHeap, HashMap, HashSet};
+use std::collections::{BinaryHeap, HashMap, HashSet, VecDeque};
 use std::fmt::Debug;
 use std::marker::PhantomData;
 
@@ -37,8 +37,12 @@ where
     /// New boundary value
     pub new_bound: W,
 
-    /// Set of vertices with computed shortest paths
+    /// Set of vertices with computed shortest paths (dist < new_bound)
     pub vertices: Vec<usize>,
+
+    /// Set of vertices that were reached but have dist >= new_bound
+    /// These must be re-inserted into the BlockList at the upper level
+    pub overflow: Vec<(usize, W)>,
 }
 
 impl<W, G> BMSSP<W, G>
@@ -48,8 +52,8 @@ where
 {
     /// Create a new BMSSP algorithm instance with automatically calculated parameters
     pub fn new(vertex_count: usize) -> Self {
-        // Calculate parameters k and t
-        let log_n = (vertex_count as f64).ln();
+        // Calculate parameters k and t using log2
+        let log_n = (vertex_count as f64).log2();
 
         let k = (log_n.powf(1.0 / 3.0)).ceil() as usize;
         let t = (log_n.powf(2.0 / 3.0)).ceil() as usize;
@@ -91,7 +95,7 @@ where
         predecessors: &mut Vec<Option<usize>>,
     ) -> Result<BMSSPResult<W>>
     where
-        W: Ord, // Add explicit Ord trait bound here
+        W: Ord,
     {
         if sources.is_empty() {
             return Err(Error::AlgorithmError("Empty sources set".to_string()));
@@ -132,24 +136,45 @@ where
         }
 
         // Main iteration loop
-        let mut _iteration = 0;
         // Algorithm 3, line 12 caps |U| at k * 2^{l t}
         while result_vertices.len() < self.k * 2usize.pow(level as u32 * self.t as u32)
             && !block_list.is_empty()
         {
-            _iteration += 1;
-
             // Pull smallest vertices from D with their bound
             let (si, bi) = block_list.pull(block_size);
+
+            if si.is_empty() {
+                // If we pulled nothing valid, but block list was not empty,
+                // it means everything remaining was stale or filtered out.
+                // We should continue to next iteration which will pull more.
+                // But pull() updates internal state, so eventually is_empty() becomes true.
+                continue;
+            }
 
             // Recursively call BMSSP
             let result = self.execute(graph, level - 1, bi, &si, distances, predecessors)?;
             let ui = result.vertices;
             let new_bound = result.new_bound;
+            let overflow_i = result.overflow;
 
             // Add vertices to result set
             for &vertex in &ui {
                 result_vertices.insert(vertex);
+            }
+
+            // Handle overflow vertices from recursive call
+            // These are vertices with dist >= new_bound.
+            // Some might be < bi (should be prepended), some >= bi (should be inserted)
+            let mut overflow_prepend = Vec::new();
+            for (v, dist) in overflow_i {
+                if dist < bi && dist < bound {
+                    overflow_prepend.push((v, dist));
+                } else if dist >= bi && dist < bound {
+                    block_list.insert(v, dist);
+                }
+            }
+            if !overflow_prepend.is_empty() {
+                block_list.batch_prepend(overflow_prepend);
             }
 
             // Relax edges from ui
@@ -166,6 +191,8 @@ where
                         }
 
                         // Only add to block list if not already processed in this level
+                        // Note: result_vertices contains vertices < new_bound
+                        // But potential_dist might be >= new_bound
                         if !result_vertices.contains(&v) {
                             // Add to appropriate set based on distance
                             if potential_dist >= bi && potential_dist < bound {
@@ -211,18 +238,22 @@ where
         // Convert result set to vector
         let result_vec = result_vertices.into_iter().collect::<Vec<_>>();
 
+        // Drain remaining elements from BlockList as overflow
+        // These are vertices that were reached but >= prev_bound (or bound)
+        let mut overflow_vec = block_list.drain_all();
+
+        // Filter overflow to ensure they are strictly < bound
+        overflow_vec.retain(|&(_, dist)| dist < bound);
+
         Ok(BMSSPResult {
-            // Return the smallest bound encountered. If no vertices were
-            // processed (`block_list` empty), `prev_bound` remains equal to
-            // `bound`, so the minimum is the original bound.
+            // Return the smallest bound encountered.
             new_bound: std::cmp::min(bound, prev_bound),
             vertices: result_vec,
+            overflow: overflow_vec,
         })
     }
 
     /// Base case of the BMSSP algorithm (level = 0)
-    /// This is an optimized implementation of the mini-Dijkstra algorithm
-    /// that limits the number of vertices processed based on the k parameter
     fn base_case(
         &self,
         graph: &G,
@@ -232,45 +263,37 @@ where
         predecessors: &mut Vec<Option<usize>>,
     ) -> Result<BMSSPResult<W>>
     where
-        W: Ord, // Add explicit Ord trait bound here
+        W: Ord,
     {
         // Early termination for empty sources
         if sources.is_empty() {
             return Ok(BMSSPResult {
                 new_bound: bound,
                 vertices: Vec::new(),
+                overflow: Vec::new(),
             });
         }
 
-        // For single source with small k, use optimized mini-Dijkstra
-        if sources.len() == 1 {
-            return self.mini_dijkstra(graph, sources[0], bound, distances, predecessors);
-        }
-
-        // Pre-allocate with capacity to avoid reallocations
+        // Pre-allocate with capacity
         let mut heap = BinaryHeap::with_capacity(self.k * 4);
-        let mut result_vertices = Vec::with_capacity(self.k * 2);
 
-        // Use a bitmap for visited tracking (more efficient than a full boolean vector)
-        let vertex_count = graph.vertex_count();
-        let mut visited = vec![false; vertex_count];
+        // Use HashSet for visited tracking to avoid O(N) allocation
+        let mut visited = HashSet::with_capacity(self.k * 4);
 
         // Counter for processed vertices to enforce the k-limit
         let mut processed_count = 0;
 
         // Add all sources to the heap
         for &source in sources {
-            if !visited[source] {
+            if !visited.contains(&source) {
                 heap.push(std::cmp::Reverse((distances[source], source)));
-                result_vertices.push(source);
-                visited[source] = true;
+                visited.insert(source);
             }
         }
 
         // Run bounded Dijkstra's algorithm
         while let Some(std::cmp::Reverse((dist_u, u))) = heap.pop() {
             // Skip if we've already found a better path or reached the bound
-            // Note: We check strict inequality for distances[u] to allow re-processing equal distances
             if dist_u > distances[u] || dist_u > bound {
                 continue;
             }
@@ -282,95 +305,62 @@ where
                 break;
             }
 
-            // Process outgoing edges using block processing for better cache efficiency
-            let mut edge_buffer = Vec::with_capacity(8); // Small buffer for edge batching
-
+            // Process outgoing edges
             for (v, weight) in graph.outgoing_edges(u) {
-                edge_buffer.push((v, weight));
+                let new_dist = dist_u + weight;
 
-                // Process edges in small batches for better cache locality
-                if edge_buffer.len() >= 8 {
-                    self.process_edge_batch(
-                        &edge_buffer,
-                        u,
-                        dist_u,
-                        bound,
-                        distances,
-                        predecessors,
-                        &mut heap,
-                        &mut visited,
-                        &mut result_vertices,
-                    );
-                    edge_buffer.clear();
+                // Only update if the new distance is better (or equal) and within the bound
+                if new_dist <= bound && new_dist <= distances[v] {
+                    if new_dist < distances[v] {
+                        distances[v] = new_dist;
+                        predecessors[v] = Some(u);
+                    }
+
+                    heap.push(std::cmp::Reverse((new_dist, v)));
+
+                    if !visited.contains(&v) {
+                        visited.insert(v);
+                    }
                 }
-            }
-
-            // Process remaining edges
-            if !edge_buffer.is_empty() {
-                self.process_edge_batch(
-                    &edge_buffer,
-                    u,
-                    dist_u,
-                    bound,
-                    distances,
-                    predecessors,
-                    &mut heap,
-                    &mut visited,
-                    &mut result_vertices,
-                );
             }
         }
 
-        // Determine new boundary using a more efficient approach
-        let new_bound =
-            self.calculate_new_bound(result_vertices.len(), bound, &result_vertices, distances);
+        // Collect results from visited set
+        let mut collected_vertices: Vec<usize> = visited.into_iter().collect();
 
-        // Filter out vertices with distances >= new_bound
-        // Use drain_filter when it becomes stable for better performance
-        let result_vec = result_vertices
-            .into_iter()
-            .filter(|&v| distances[v] < new_bound)
-            .collect::<Vec<_>>();
+        // Determine new boundary
+        let new_bound = self.calculate_new_bound(
+            collected_vertices.len(),
+            bound,
+            &collected_vertices,
+            distances,
+        );
+
+        // Filter into vertices (< new_bound) and overflow (>= new_bound but < bound)
+        let mut result_vec = Vec::new();
+        let mut overflow_vec = Vec::new();
+
+        for v in collected_vertices {
+            if distances[v] < new_bound {
+                result_vec.push(v);
+            } else if distances[v] < bound {
+                overflow_vec.push((v, distances[v]));
+            }
+        }
 
         Ok(BMSSPResult {
             new_bound,
             vertices: result_vec,
+            overflow: overflow_vec,
         })
     }
 
-    /// Helper function to process a batch of edges for better cache efficiency
-    #[inline]
-    fn process_edge_batch(
-        &self,
-        edge_batch: &[(usize, W)],
-        u: usize,
-        dist_u: W,
-        bound: W,
-        distances: &mut Vec<W>,
-        predecessors: &mut Vec<Option<usize>>,
-        heap: &mut BinaryHeap<std::cmp::Reverse<(W, usize)>>,
-        visited: &mut Vec<bool>,
-        result_vertices: &mut Vec<usize>,
-    ) {
-        for &(v, weight) in edge_batch {
-            let new_dist = dist_u + weight;
+    // Removed optimized mini_dijkstra separate path for simplicity and correctness
+    // as it duplicated logic and needs similar fixes.
+    // The general base_case handles single source efficiently enough with HashSet.
 
-            // Only update if the new distance is better (or equal) and within the bound
-            if new_dist <= bound && new_dist <= distances[v] {
-                if new_dist < distances[v] {
-                    distances[v] = new_dist;
-                    predecessors[v] = Some(u);
-                }
-                heap.push(std::cmp::Reverse((new_dist, v)));
-
-                // Add to result vertices if not already visited
-                if !visited[v] {
-                    result_vertices.push(v);
-                    visited[v] = true;
-                }
-            }
-        }
-    }
+    /// Helper function to process a batch of edges (removed in favor of simpler loop in base_case)
+    // ...
 
     /// Calculate the new boundary value based on the result set size
     #[inline]
@@ -387,79 +377,13 @@ where
         }
 
         // Compute the (k+1)-th smallest distance among discovered vertices
-        // This ensures vertices with distance strictly less than this threshold are kept
         let mut discovered_distances: Vec<W> = vertices.iter().map(|&v| distances[v]).collect();
         discovered_distances.sort();
         // Safe because result_size > self.k
         discovered_distances[self.k]
     }
 
-    /// Optimized mini-Dijkstra for the single-source case
-    fn mini_dijkstra(
-        &self,
-        graph: &G,
-        source: usize,
-        bound: W,
-        distances: &mut Vec<W>,
-        predecessors: &mut Vec<Option<usize>>,
-    ) -> Result<BMSSPResult<W>> {
-        let mut heap = BinaryHeap::with_capacity(self.k * 2);
-        let mut result_vertices = Vec::with_capacity(self.k * 2);
-        let mut visited = vec![false; graph.vertex_count()];
-
-        // Add source to heap and result
-        heap.push(std::cmp::Reverse((distances[source], source)));
-        result_vertices.push(source);
-        visited[source] = true;
-
-        // Process at most k vertices
-        let mut processed_count = 0;
-
-        while let Some(std::cmp::Reverse((dist_u, u))) = heap.pop() {
-            if dist_u > distances[u] || dist_u > bound {
-                continue;
-            }
-
-            processed_count += 1;
-            if processed_count > self.k {
-                break;
-            }
-
-            // Use direct iteration for better performance in the single-source case
-            for (v, weight) in graph.outgoing_edges(u) {
-                let new_dist = dist_u + weight;
-
-                if new_dist <= bound && new_dist <= distances[v] {
-                    if new_dist < distances[v] {
-                        distances[v] = new_dist;
-                        predecessors[v] = Some(u);
-                    }
-                    heap.push(std::cmp::Reverse((new_dist, v)));
-
-                    if !visited[v] {
-                        result_vertices.push(v);
-                        visited[v] = true;
-                    }
-                }
-            }
-        }
-
-        let new_bound =
-            self.calculate_new_bound(result_vertices.len(), bound, &result_vertices, distances);
-
-        let result_vec = result_vertices
-            .into_iter()
-            .filter(|&v| distances[v] < new_bound)
-            .collect::<Vec<_>>();
-
-        Ok(BMSSPResult {
-            new_bound,
-            vertices: result_vec,
-        })
-    }
-
-    /// Find pivots as described in the paper using a more efficient algorithm
-    /// This implementation follows the exact procedure from the paper to identify pivots
+    /// Find pivots as described in the paper
     fn find_pivots(
         &self,
         graph: &G,
@@ -469,10 +393,8 @@ where
         predecessors: &mut Vec<Option<usize>>,
     ) -> Result<(Vec<usize>, Vec<usize>)>
     where
-        W: Ord, // Add explicit Ord trait bound here
+        W: Ord,
     {
-        use std::collections::VecDeque;
-
         // Initialize work set with sources
         let mut work_set = sources.to_vec();
         let mut frontier = VecDeque::new();
@@ -482,10 +404,10 @@ where
             frontier.push_back(s);
         }
 
-        // Track visited vertices to avoid duplicates in work_set
-        let mut visited = vec![false; graph.vertex_count()];
+        // Track visited vertices using HashSet to avoid O(N) allocation
+        let mut visited = HashSet::new();
         for &s in sources {
-            visited[s] = true;
+            visited.insert(s);
         }
 
         // Perform k steps of relaxation (Bellman-Ford-like)
@@ -506,8 +428,8 @@ where
                         predecessors[v] = Some(u);
 
                         // Add to work_set and frontier if not visited
-                        if !visited[v] {
-                            visited[v] = true;
+                        if !visited.contains(&v) {
+                            visited.insert(v);
                             work_set.push(v);
                             frontier.push_back(v);
                         }
@@ -518,68 +440,10 @@ where
             steps += 1;
         }
 
-        // If work_set is small, return all sources as pivots
-        if work_set.len() <= self.k * sources.len() {
-            return Ok((sources.to_vec(), work_set));
-        }
-
-        // Compute the size of the shortest-path trees rooted at each source
-        let mut tree_sizes = HashMap::new();
-
-        // Initialize tree sizes for sources
-        for &s in sources {
-            tree_sizes.insert(s, 1); // Start with size 1 (just the root)
-        }
-
-        // Convert sources to a HashSet for constant-time lookups when
-        // checking if a vertex is one of the sources during root finding.
-        let source_set: HashSet<usize> = sources.iter().copied().collect();
-
-        // Traverse work set and accumulate tree sizes
-        for &v in &work_set {
-            if let Some(pred) = predecessors[v] {
-                if pred != v {
-                    // Skip self-loops
-
-                    // Increment tree size for the root of this tree
-                    let mut current = pred;
-                    let mut root = current;
-
-                    // Find the root of this tree using constant-time source lookup
-                    while let Some(parent) = predecessors[current] {
-                        if parent == current || source_set.contains(&current) {
-                            root = current;
-                            break;
-                        }
-                        current = parent;
-                    }
-
-                    // Increment tree size for the root
-                    *tree_sizes.entry(root).or_insert(1) += 1;
-                }
-            }
-        }
-
-        // Find pivots (sources with large trees)
-        let mut pivots = Vec::new();
-        for &s in sources {
-            if let Some(&size) = tree_sizes.get(&s) {
-                if size >= self.k {
-                    pivots.push(s);
-                }
-            }
-        }
-
-        // If no pivots found, use the source with the largest tree
-        if pivots.is_empty() && !sources.is_empty() {
-            let best_source = sources
-                .iter()
-                .max_by_key(|&&s| tree_sizes.get(&s).unwrap_or(&0))
-                .copied()
-                .unwrap();
-
-            pivots.push(best_source);
-        }
+        // Use the current frontier as the set of pivots
+        // The frontier contains the vertices where the "k-step" search stopped.
+        // Resuming the search from these vertices ensures we cover the rest of the graph.
+        let pivots: Vec<usize> = frontier.into_iter().collect();
 
         Ok((pivots, work_set))
     }
